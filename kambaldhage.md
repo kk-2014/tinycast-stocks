@@ -154,3 +154,21 @@ Notice the spec contains a *Risks* section that names both of the things that la
 | `docs/superpowers/specs/` and `plans/` | The design and the task list |
 
 **One sentence to remember:** when something fails, make the failure visible, and when something you scrape changes, go looking for the structured data underneath the paint.
+
+---
+
+## 9. Going to India: NSE and BSE
+
+**The parser needed zero changes.** We pointed the existing `parseGoogleFinance` at a real `RELIANCE:NSE` page and it just worked: INR currency, 74 intraday candles stamped `+05:30`, news, stats, everything. That is the payoff of finding data by *shape* (a quote entry looks like this, a candle series looks like that) instead of by hard-coded array positions. Positions are a street address; shape is a face. Move house and the face is still recognisable. A new country, same face.
+
+**The search results that vanished.** stockanalysis.com returns Indian stocks as `nse/RELIANCE` and `bom/500325`. The old `search.ts` had a line that dropped anything containing a `/`, written to throw out things like `BTC/USD`. It did its job so well it silently threw out an entire subcontinent, and nothing ever complained. Lesson: a filter written for one kind of junk will happily eat good data of a kind you hadn't met yet. Now the prefix decides: `nse` becomes exchange `NSE`, `bom` becomes `BOM`, and `asx`, `otc`, `dse`, `idx`, `tpex` and friends are still dropped. Indian items also use `t:"sy"` with the stock-or-ETF flag in `st`, so the rules differ slightly from the US ones.
+
+**Why not Yahoo's search?** We tried it first. It answered 429 (too many requests). An unofficial, rate-limited endpoint is a bridge that closes when it feels like it, so we stayed with the one that works and did not build on it.
+
+**Why BSE looks like `500325`.** Google Finance addresses BSE listings by their numeric scrip code (`500325:BOM`), not by a ticker name. Conveniently, stockanalysis uses the same codes (`bom/500325`), so the search hit's symbol can go straight into the URL. Notice `BOM` is Google's name for BSE (Bombay); the UI shows it as a `BSE` tag.
+
+**Because we know the exchange, we skip probing.** US symbols are searched across NASDAQ, NYSE and others until one answers. An Indian hit already says where it lives, so `fetchQuote(symbol, { exchange })` makes exactly one request. A 404 means "not found", not "try the next exchange", which also keeps us polite to Google.
+
+**Lakh and crore.** India groups digits as 13,07,900 (the first group is three digits, the rest are pairs), and big numbers are lakh (10^5) and crore (10^7). A *lakh crore* is 10^12, which is why Reliance's market cap reads `17.67L Cr` rather than "17.67T". We get the grouping free from `Intl.NumberFormat("en-IN")` and wrote a small `compactIndian` for the abbreviations. Tests pin both, so `₹1,307.90` and `₹13,07,900.00` can't quietly regress.
+
+**Keys must include the exchange.** A symbol alone is not an identity: the same ticker can exist on two exchanges. So favourites, React row ids and the quote cache are all keyed by `exchange:symbol` (`favKey`, `quote:v2:NSE:RELIANCE`). The old `quote:v1:` cache keys were abandoned on purpose by bumping the version, and old favourites without an exchange still load, meaning "US, probe for it". Rule of thumb: if two different things can share a name, put the namespace in the key before the collision bug exists.
