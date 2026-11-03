@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getFresh, putFresh } from "./cache";
 import { fetchQuote } from "./google";
 import { raycastKV } from "./kv";
@@ -14,21 +14,32 @@ export type QuoteState =
 /** Fetches the quote for `symbol` once the selection settles. Cancels in-flight work on change. */
 export function useQuote(symbol: string | undefined, refreshKey = 0): QuoteState | undefined {
   const [state, setState] = useState<QuoteState>();
+  const handledRef = useRef(refreshKey);
 
   useEffect(() => {
     if (!symbol) {
       setState(undefined);
       return;
     }
+    // "Refresh Quote" bypasses the cache once per click, not for every later selection.
+    const force = refreshKey !== handledRef.current;
+    handledRef.current = refreshKey;
     const abort = new AbortController();
     setState({ symbol, status: "loading" });
 
     const timer = setTimeout(async () => {
       try {
-        const cacheKey = `quote:${symbol}`;
-        const cached = refreshKey === 0 ? await getFresh<ParseResult>(raycastKV, cacheKey, QUOTE_TTL_MS) : undefined;
+        const cacheKey = `quote:v1:${symbol}`;
+        const stored = force ? undefined : await getFresh<ParseResult>(raycastKV, cacheKey, QUOTE_TTL_MS);
+        const cached = typeof stored === "object" && stored !== null && typeof stored.ok === "boolean" ? stored : undefined;
         const result = cached ?? (await fetchQuote(symbol, { hints: raycastKV, signal: abort.signal }));
-        if (!cached && result.ok) await putFresh(raycastKV, cacheKey, result);
+        if (!cached && (result.ok || result.kind === "not-found")) {
+          try {
+            await putFresh(raycastKV, cacheKey, result);
+          } catch {
+            // Caching is best-effort; never let it turn a good quote into an error.
+          }
+        }
         if (!abort.signal.aborted) setState({ symbol, status: "done", result });
       } catch (error) {
         if (abort.signal.aborted) return;

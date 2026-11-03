@@ -1,10 +1,10 @@
 import { Action, ActionPanel, Color, Icon, List, LocalStorage } from "@raycast/api";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { buildChartSvg } from "./chart";
 import { chartMarkdown } from "./chartImage";
 import { compact, money, signed, timeAgo } from "./format";
 import { FAVORITES_KEY, parseFavs, toggleFav, type Fav } from "./favorites";
-import { quoteUrl } from "./google";
+import { googleFinanceSearchUrl, quoteUrl } from "./google";
 import { searchStocks, type SearchHit } from "./search";
 import type { Quote } from "./types";
 import { useQuote, type QuoteState } from "./useQuote";
@@ -39,29 +39,44 @@ function QuoteDetail({ state, range }: { state: QuoteState | undefined; range: R
   const label = (title: string, text: string | undefined) =>
     text === undefined ? null : <List.Item.Detail.Metadata.Label key={title} title={title} text={text} />;
   const num = (n: number | undefined, f: (n: number) => string) => (n === undefined ? undefined : f(n));
+  const price = (n: number) => money(n, q.currency);
+
+  const groups = [
+    [
+      label("Open", num(s.open, price)),
+      label("High", num(s.high, price)),
+      label("Low", num(s.low, price)),
+      label("Prev Close", money(q.previousClose, q.currency)),
+    ],
+    [
+      label("Market Cap", num(s.marketCap, compact)),
+      label("Volume", num(s.volume, compact)),
+      label("Avg Volume", num(s.avgVolume, compact)),
+    ],
+    [
+      label("52-Wk High", num(s.yearHigh, price)),
+      label("52-Wk Low", num(s.yearLow, price)),
+      label("P/E", num(s.peRatio, (n) => n.toFixed(2))),
+      label("EPS", num(s.eps, (n) => n.toFixed(2))),
+      label("Beta", num(s.beta, (n) => n.toFixed(2))),
+    ],
+    [
+      label("Shares Out", num(s.sharesOutstanding, compact)),
+      label("Employees", num(s.employees, (n) => n.toLocaleString("en-US"))),
+    ],
+  ].filter((group) => group.some((item) => item !== null));
 
   return (
     <List.Item.Detail
       markdown={detailMarkdown(q, range)}
       metadata={
         <List.Item.Detail.Metadata>
-          {label("Open", num(s.open, (n) => money(n, q.currency)))}
-          {label("High", num(s.high, (n) => money(n, q.currency)))}
-          {label("Low", num(s.low, (n) => money(n, q.currency)))}
-          {label("Prev Close", money(q.previousClose, q.currency))}
-          <List.Item.Detail.Metadata.Separator />
-          {label("Market Cap", num(s.marketCap, compact))}
-          {label("Volume", num(s.volume, compact))}
-          {label("Avg Volume", num(s.avgVolume, compact))}
-          <List.Item.Detail.Metadata.Separator />
-          {label("52-Wk High", num(s.yearHigh, (n) => money(n, q.currency)))}
-          {label("52-Wk Low", num(s.yearLow, (n) => money(n, q.currency)))}
-          {label("P/E", num(s.peRatio, (n) => n.toFixed(2)))}
-          {label("EPS", num(s.eps, (n) => n.toFixed(2)))}
-          {label("Beta", num(s.beta, (n) => n.toFixed(2)))}
-          <List.Item.Detail.Metadata.Separator />
-          {label("Shares Out", num(s.sharesOutstanding, compact))}
-          {label("Employees", num(s.employees, (n) => n.toLocaleString("en-US")))}
+          {groups.map((group, i) => (
+            <Fragment key={i}>
+              {i > 0 && <List.Item.Detail.Metadata.Separator />}
+              {group}
+            </Fragment>
+          ))}
         </List.Item.Detail.Metadata>
       }
     />
@@ -115,6 +130,10 @@ export default function Command() {
   const quoteState = useQuote(selected, refreshKey);
 
   const rows: Fav[] = query.trim() ? hits.map((h) => ({ symbol: h.symbol, name: h.name })) : favs;
+  useEffect(() => {
+    if (rows.length === 0) setSelected(undefined);
+  }, [rows.length]);
+
   const isFav = (symbol: string) => favs.some((f) => f.symbol === symbol);
 
   async function toggleFavorite(fav: Fav) {
@@ -123,7 +142,6 @@ export default function Command() {
     await LocalStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
   }
 
-  const exchangeForUrl = quoteState?.status === "done" && quoteState.result.ok ? quoteState.result.quote.exchange : "NASDAQ";
 
   return (
     <List
@@ -132,14 +150,14 @@ export default function Command() {
       searchBarPlaceholder="Search company or ticker…"
       onSearchTextChange={setQuery}
       onSelectionChange={(id) => setSelected(id ?? undefined)}
-      throttle
+      filtering={false}
     >
       {searchError ? (
         <List.EmptyView icon={Icon.ExclamationMark} title="Search failed" description={searchError} />
       ) : rows.length === 0 ? (
         <List.EmptyView
           icon={Icon.MagnifyingGlass}
-          title={query.trim() ? "No matches" : "Type a company name or ticker"}
+          title={searching ? "Searching…" : query.trim() ? "No matches" : "Type a company name or ticker"}
           description={query.trim() ? undefined : "Star a result with ⌘⇧F to pin it here."}
         />
       ) : (
@@ -154,11 +172,15 @@ export default function Command() {
               detail={<QuoteDetail state={quoteState?.symbol === row.symbol ? quoteState : undefined} range={range} />}
               actions={
                 <ActionPanel>
-                  <Action.OpenInBrowser title="Open in Google Finance" url={quoteUrl(row.symbol, exchangeForUrl)} />
+                  <Action.OpenInBrowser title="Open in Google Finance" url={
+                      quoteState?.status === "done" && quoteState.result.ok && quoteState.symbol === row.symbol
+                        ? quoteUrl(row.symbol, quoteState.result.quote.exchange)
+                        : googleFinanceSearchUrl(row.symbol)
+                    } />
                   <Action
                     title={range === "1D" ? "Show 1-Month Chart" : "Show 1-Day Chart"}
                     icon={Icon.LineChart}
-                    shortcut={{ modifiers: ["cmd"], key: "r" }}
+                    shortcut={{ modifiers: ["cmd"], key: "t" }}
                     onAction={() => setRange(range === "1D" ? "1M" : "1D")}
                   />
                   <Action
@@ -170,7 +192,7 @@ export default function Command() {
                   <Action
                     title="Refresh Quote"
                     icon={Icon.ArrowClockwise}
-                    shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
+                    shortcut={{ modifiers: ["cmd"], key: "r" }}
                     onAction={() => setRefreshKey((k) => k + 1)}
                   />
                   {quoteState?.status === "done" && quoteState.result.ok && quoteState.symbol === row.symbol && (
