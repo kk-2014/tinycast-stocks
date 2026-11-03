@@ -157,3 +157,93 @@ describe("extractSession", () => {
     });
   });
 });
+
+const relHtml = readFileSync(join(__dirname, "fixtures/RELIANCE-NSE.html"), "utf8");
+function parsedReliance() {
+  const r = parseGoogleFinance(relHtml, "RELIANCE", "NSE");
+  if (!r.ok) throw new Error(`expected ok, got ${r.kind}: ${r.reason}`);
+  return r.quote;
+}
+
+describe("parseGoogleFinance: market hours", () => {
+  it("converts the AAPL session window (09:30-16:00 at UTC-5) to epoch seconds", () => {
+    expect(parsed().marketHours).toEqual({ open: 1793716200, close: 1793739600 });
+  });
+
+  it("converts the RELIANCE session window (09:15-15:30 IST)", () => {
+    expect(parsedReliance().marketHours).toEqual({
+      open: Date.UTC(2026, 10, 3, 9, 15) / 1000 - 19800,
+      close: Date.UTC(2026, 10, 3, 15, 30) / 1000 - 19800,
+    });
+  });
+
+  it("treats a null minute as zero", () => {
+    const entry = [...zedEntry];
+    entry[19] = [[1, [2026, 11, 3, 9, 30, null, null, [-18000]], [2026, 11, 3, 16, null, null, null, [-18000]]]];
+    const r = parseGoogleFinance(blob(entry), "ZZZ", "NASDAQ");
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.quote.marketHours).toEqual({ open: 1793716200, close: 1793739600 });
+  });
+});
+
+describe("parseGoogleFinance: analyst consensus", () => {
+  it("extracts AAPL targets, counts and rating (Sell/Hold order inferred)", () => {
+    expect(parsed().analyst).toEqual({
+      targetLow: 250,
+      targetHigh: 400,
+      targetAvg: 338.22,
+      count: 29,
+      rating: "Buy",
+      buy: 15,
+      sell: 5,
+      hold: 9,
+    });
+  });
+
+  it("prettifies RELIANCE's rating", () => {
+    const a = parsedReliance().analyst;
+    expect(a).toMatchObject({ rating: "Strong Buy", buy: 4, sell: 0, hold: 0, targetAvg: 1688.75, count: 4 });
+  });
+});
+
+describe("parseGoogleFinance: peers", () => {
+  it("finds the AAPL peer group", () => {
+    const peers = parsed().peers;
+    expect(peers.map((p) => `${p.symbol}:${p.exchange}`)).toEqual([
+      "NVDA:NASDAQ",
+      "AMZN:NASDAQ",
+      "MSFT:NASDAQ",
+      "TSLA:NASDAQ",
+    ]);
+    expect(peers[0]).toMatchObject({ name: "NVIDIA Corp", currency: "USD" });
+    expect(peers[0].price).toBeCloseTo(208.0301, 3);
+    expect(peers[0].change).toBeCloseTo(5.970108, 3);
+    expect(peers[0].changePercent).toBeCloseTo(2.9546216, 3);
+  });
+
+  it("finds the RELIANCE peer group", () => {
+    expect(parsedReliance().peers.map((p) => `${p.symbol}:${p.exchange}`)).toEqual([
+      "INFY:NYSE",
+      "HDFCBANK:NSE",
+      "HINDUNILVR:NSE",
+      "KOTAKBANK:NSE",
+    ]);
+  });
+});
+
+describe("parseGoogleFinance: dividend yield", () => {
+  it("reads the yield (percent) from the profile", () => {
+    expect(parsed().stats.dividendYield).toBeCloseTo(0.3255, 3);
+  });
+});
+
+describe("parseGoogleFinance: optional insights", () => {
+  it("leaves everything empty for a bare quote entry", () => {
+    const r = parseGoogleFinance(blob(zedEntry), "ZZZ", "NASDAQ");
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.quote.peers).toEqual([]);
+    expect(r.quote.analyst).toBeUndefined();
+    expect(r.quote.marketHours).toBeUndefined();
+    expect(r.quote.stats.dividendYield).toBeUndefined();
+  });
+});

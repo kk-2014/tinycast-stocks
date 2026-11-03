@@ -30,6 +30,36 @@ export interface Stats {
   beta?: number;
   sharesOutstanding?: number;
   employees?: number;
+  /** Percent, e.g. 0.33 means 0.33% */
+  dividendYield?: number;
+}
+
+/** Regular-session window, Unix epoch seconds. */
+export interface MarketHours {
+  open: number;
+  close: number;
+}
+
+export interface Analyst {
+  targetLow: number;
+  targetHigh: number;
+  targetAvg: number;
+  count: number;
+  /** Prettified, e.g. "Strong Buy" */
+  rating: string;
+  buy: number;
+  sell: number;
+  hold: number;
+}
+
+export interface Peer {
+  symbol: string;
+  exchange: string;
+  name: string;
+  currency: string;
+  price: number;
+  change: number;
+  changePercent: number;
 }
 
 /** Tokens from the quote page that Google's batchexecute RPC needs. */
@@ -57,6 +87,10 @@ export interface Quote {
   /** Daily candles, about one month (may be empty) */
   daily: Candle[];
   news: NewsItem[];
+  marketHours?: MarketHours;
+  analyst?: Analyst;
+  /** Related tickers (may be empty) */
+  peers: Peer[];
   /** Present when the page carried the RPC tokens needed for longer chart ranges */
   session?: Session;
 }

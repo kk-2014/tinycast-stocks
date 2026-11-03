@@ -1,5 +1,5 @@
 import { extractBlobs, walk } from "./blobs";
-import type { Candle, FailureKind, NewsItem, ParseResult, Quote, Session, Stats } from "./types";
+import type { Analyst, Candle, FailureKind, MarketHours, NewsItem, ParseResult, Peer, Quote, Session, Stats } from "./types";
 
 export const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const isStr = (x: unknown): x is string => typeof x === "string";
@@ -197,6 +197,87 @@ function findNews(blobs: unknown[], symbol: string, companyShortName: string): N
   return [...byUrl.values()].sort((x, y) => y.publishedAt - x.publishedAt).slice(0, MAX_NEWS);
 }
 
+/** `entry[19]` = `[[1, [Y,M,D,h,min,null,null,[offsetSec]], [Y,M,D,h,min,…]]]`; `min` may be null (= 0). */
+function toEpoch(t: unknown): number | undefined {
+  if (!Array.isArray(t)) return undefined;
+  const [y, mo, d, h, min] = t;
+  const offset = Array.isArray(t[7]) ? t[7][0] : undefined;
+  if (!isNum(y) || !isNum(mo) || !isNum(d) || !isNum(h) || !isNum(offset)) return undefined;
+  return Date.UTC(y, mo - 1, d, h, isNum(min) ? min : 0) / 1000 - offset;
+}
+
+function findMarketHours(entry: unknown[]): MarketHours | undefined {
+  const session = Array.isArray(entry[19]) && Array.isArray(entry[19][0]) ? entry[19][0] : undefined;
+  if (!session) return undefined;
+  const open = toEpoch(session[1]);
+  const close = toEpoch(session[2]);
+  return open !== undefined && close !== undefined && close > open ? { open, close } : undefined;
+}
+
+/** "StrongBuy" -> "Strong Buy" */
+const prettyRating = (r: string) => r.replace(/([a-z])([A-Z])/g, "$1 $2");
+
+/**
+ * `[name, currency, targetLow, targetHigh, targetAvg, pctVsPrevClose, analystCount, rating, c1, c2, c3, null, n]`.
+ * c1 = Buy. The Sell/Hold order of c2/c3 is inferred from Apple's 40 individual ratings
+ * (23 Buy / 12 Hold / 5 Sell, hold > sell, so 9 = Hold and 5 = Sell); RELIANCE's (4,0,0) cannot disambiguate.
+ */
+function findAnalyst(blobs: unknown[], currency: string): Analyst | undefined {
+  const a = findAll(
+    blobs,
+    (a) =>
+      isStr(a[0]) &&
+      isStr(a[1]) &&
+      /^[A-Z]{3}$/.test(a[1]) &&
+      a[1] === currency &&
+      [2, 3, 4, 5, 6].every((i) => isNum(a[i])) &&
+      isStr(a[7]) &&
+      [8, 9, 10].every((i) => isNum(a[i])),
+  )[0];
+  if (!a) return undefined;
+  return {
+    targetLow: a[2] as number,
+    targetHigh: a[3] as number,
+    targetAvg: a[4] as number,
+    count: a[6] as number,
+    rating: prettyRating(a[7] as string),
+    buy: a[8] as number,
+    sell: a[9] as number,
+    hold: a[10] as number,
+  };
+}
+
+const MAX_PEERS = 6;
+
+const isQuoteShaped = (c: unknown): c is unknown[] =>
+  Array.isArray(c) &&
+  Array.isArray(c[1]) &&
+  isStr(c[1][0]) &&
+  isStr(c[1][1]) &&
+  isStr(c[2]) &&
+  isStr(c[4]) &&
+  Array.isArray(c[5]) &&
+  isNum(c[5][0]) &&
+  isNum(c[5][1]) &&
+  isNum(c[5][2]);
+
+/** The first group of at least two quote-shaped children, none of which is the requested symbol. */
+function findPeers(blobs: unknown[], symbol: string, exchange: string): Peer[] {
+  const group = findAll(blobs, (a) => {
+    const quotes = a.filter(isQuoteShaped);
+    return quotes.length >= 2 && !quotes.some((c) => (c[1] as string[])[0] === symbol && (c[1] as string[])[1] === exchange);
+  })[0];
+  if (!group) return [];
+  return group
+    .filter(isQuoteShaped)
+    .slice(0, MAX_PEERS)
+    .map((c) => {
+      const [price, change, changePercent] = c[5] as number[];
+      const [sym, exch] = c[1] as string[];
+      return { symbol: sym, exchange: exch, name: c[2] as string, currency: c[4] as string, price, change, changePercent };
+    });
+}
+
 const DEFAULT_BASE = "/finance/_/FinHubUi";
 
 /** Pulls the batchexecute tokens (`FdrFJe`, `cfb2h`, `Im6cmf`) out of the page. Needs both sid and bl. */
@@ -241,6 +322,7 @@ function parseUnsafe(html: string, symbol: string, exchange: string): ParseResul
     eps: optNum(profile?.[19]),
     beta: optNum(profile?.[20]),
     sharesOutstanding: optNum(profile?.[21]),
+    dividendYield: isNum(profile?.[17]) && profile[17] >= 0 ? profile[17] : undefined,
   };
   const description = isStr(profile?.[2]) ? (profile[2] as string) : undefined;
 
@@ -261,6 +343,9 @@ function parseUnsafe(html: string, symbol: string, exchange: string): ParseResul
     intraday: candles.get(300) ?? [],
     daily: candles.get(86400) ?? [],
     news: findNews(blobs, symbol, isStr(profile?.[1]) ? (profile[1] as string) : (entry[2] as string).split(/\s+/)[0]),
+    marketHours: findMarketHours(entry),
+    analyst: findAnalyst(blobs, entry[4] as string),
+    peers: findPeers(blobs, symbol, exchange),
     session: extractSession(html),
   };
   return { ok: true, quote };
