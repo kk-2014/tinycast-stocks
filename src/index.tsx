@@ -4,6 +4,8 @@ import { buildChartSvg, rangeChange } from "./chart";
 import { chartMarkdown } from "./chartImage";
 import { compactFor, money, signed, timeAgo } from "./format";
 import { FAVORITES_KEY, favKey, parseFavs, toggleFav, type Fav } from "./favorites";
+import { insightsMarkdown } from "./insights";
+import { marketStatus } from "./market";
 import { googleFinanceSearchUrl, quoteUrl } from "./google";
 import { searchStocks, type SearchHit } from "./search";
 import { RANGES, type RangeId } from "./ranges";
@@ -18,7 +20,10 @@ function detailMarkdown(q: Quote, range: RangeId, chart: ChartState): string {
   const rangeLabel = RANGES.find((r) => r.id === range)?.label ?? range;
   const color = q.change >= 0 ? "🟢" : "🔴";
   const updated = q.updatedAt ? ` · updated ${timeAgo(q.updatedAt)}` : "";
-  const head = `# ${q.name} (${q.symbol})\n\n${color} **${money(q.price, q.currency)}**  ${signed(q.change)} (${signed(q.changePercent)}%)${updated}`;
+  const status = marketStatus(q.marketHours, Date.now());
+  const statusIcon = status?.state === "open" ? "🟢" : status?.state === "opens-later" ? "🟡" : "⚪";
+  const statusLine = status ? `\n\n${statusIcon} ${status.label}` : "";
+  const head = `# ${q.name} (${q.symbol})\n\n${color} **${money(q.price, q.currency)}**  ${signed(q.change)} (${signed(q.changePercent)}%)${updated}${statusLine}`;
   let chartBlock: string;
   let caption = "";
   if (chart.loading) {
@@ -34,7 +39,8 @@ function detailMarkdown(q: Quote, range: RangeId, chart: ChartState): string {
   const news = q.news.length
     ? q.news.map((n) => `- [${n.title}](${n.url}) — ${n.source} · ${timeAgo(n.publishedAt)}`).join("\n")
     : "_No news found._";
-  return `${head}\n\n${chartBlock}${caption}\n\n### News\n\n${news}`;
+  const insights = insightsMarkdown(q);
+  return `${head}\n\n${chartBlock}${caption}\n\n${insights ? `${insights}\n\n` : ""}### News\n\n${news}`;
 }
 
 function QuoteDetail({ state, range }: { state: QuoteState | undefined; range: RangeId }) {
@@ -72,6 +78,7 @@ function QuoteDetail({ state, range }: { state: QuoteState | undefined; range: R
       label("P/E", num(s.peRatio, (n) => n.toFixed(2))),
       label("EPS", num(s.eps, (n) => n.toFixed(2))),
       label("Beta", num(s.beta, (n) => n.toFixed(2))),
+      label("Dividend Yield", num(s.dividendYield, (n) => `${n.toFixed(2)}%`)),
     ],
     [
       label("Shares Out", num(s.sharesOutstanding, compactFor(q.currency))),
@@ -183,6 +190,7 @@ export default function Command() {
       isLoading={searching}
       isShowingDetail
       searchBarPlaceholder="Search company or ticker…"
+      searchText={query}
       onSearchTextChange={setQuery}
       onSelectionChange={(id) => setSelected(id ?? undefined)}
       filtering={false}
@@ -252,6 +260,18 @@ export default function Command() {
                     shortcut={{ modifiers: ["cmd"], key: "r" }}
                     onAction={() => setRefreshKey((k) => k + 1)}
                   />
+                  {favKey(row) === selected && rowState?.status === "done" && rowState.result.ok && rowState.result.quote.peers.length > 0 && (
+                    <ActionPanel.Section title="Peers">
+                      {rowState.result.quote.peers.map((p) => (
+                        <Action
+                          key={`${p.exchange}:${p.symbol}`}
+                          title={`Go to ${p.symbol} · ${p.name}`}
+                          icon={Icon.ArrowRight}
+                          onAction={() => setQuery(p.symbol)}
+                        />
+                      ))}
+                    </ActionPanel.Section>
+                  )}
                   {rowState?.status === "done" && rowState.result.ok && (
                     <Action.CopyToClipboard
                       title="Copy Price"
