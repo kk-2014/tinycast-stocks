@@ -9,6 +9,7 @@ import { searchStocks, type SearchHit } from "./search";
 import { RANGES, type RangeId } from "./ranges";
 import type { Quote } from "./types";
 import { useChart, type ChartState } from "./useChart";
+import { useFavoriteQuotes } from "./useFavoriteQuotes";
 import { useQuote, type QuoteState } from "./useQuote";
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -142,6 +143,8 @@ export default function Command() {
   const rows: Fav[] = query.trim()
     ? hits.map((h) => ({ symbol: h.symbol, name: h.name, ...(h.exchange ? { exchange: h.exchange } : {}) }))
     : favs;
+  const showingFavorites = !query.trim();
+  const favQuotes = useFavoriteQuotes(showingFavorites ? favs : [], refreshKey);
   const selectedRow = rows.find((r) => favKey(r) === selected);
   const quoteState = useQuote(selectedRow?.symbol, selectedRow?.exchange, refreshKey);
 
@@ -154,6 +157,19 @@ export default function Command() {
     quoteState?.symbol === row.symbol && quoteState.exchange === (row.exchange ?? "") ? quoteState : undefined;
   const exchangeTag = (exchange: string | undefined): List.Item.Accessory[] =>
     exchange === "NSE" ? [{ tag: "NSE" }] : exchange === "BOM" ? [{ tag: "BSE" }] : [];
+
+  const priceAccessories = (row: Fav): List.Item.Accessory[] => {
+    if (!showingFavorites) return [];
+    const result = favQuotes.get(favKey(row));
+    if (!result) return [{ text: "…" }];
+    if (!result.ok) return [{ icon: Icon.ExclamationMark, tooltip: result.reason }];
+    const q = result.quote;
+    const color = q.changePercent >= 0 ? Color.Green : Color.Red;
+    return [
+      { text: money(q.price, q.currency) },
+      { text: { value: `${signed(q.changePercent)}%`, color } },
+    ];
+  };
 
   async function toggleFavorite(fav: Fav) {
     const next = toggleFav(favs, fav);
@@ -191,6 +207,7 @@ export default function Command() {
               subtitle={row.name}
               accessories={[
                 ...exchangeTag(row.exchange),
+                ...priceAccessories(row),
                 ...(isFav(row) ? [{ icon: { source: Icon.Star, tintColor: Color.Yellow } }] : []),
               ]}
               detail={<QuoteDetail state={rowState} range={range} />}
