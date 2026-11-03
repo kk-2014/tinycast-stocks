@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { FetchResponse, Fetcher } from "../src/http";
 import { searchStocks } from "../src/search";
@@ -17,7 +19,7 @@ describe("searchStocks", () => {
     expect(called).toBe(false);
   });
 
-  it("keeps stocks and ETFs, drops other types and slash symbols, caps at 8", async () => {
+  it("keeps stocks and ETFs, drops other types and foreign slash symbols, caps at 10", async () => {
     const data = [
       { s: "AAPL", n: "Apple Inc.", t: "s" },
       { s: "SPY", n: "SPDR S&P 500", t: "e" },
@@ -27,11 +29,11 @@ describe("searchStocks", () => {
     ];
     const fetcher: Fetcher = async () => json({ data });
     const hits = await searchStocks("a", { fetcher });
-    expect(hits[0]).toEqual({ symbol: "AAPL", name: "Apple Inc.", type: "Stock" });
-    expect(hits[1]).toEqual({ symbol: "SPY", name: "SPDR S&P 500", type: "ETF" });
+    expect(hits[0]).toEqual({ symbol: "AAPL", exchange: "", name: "Apple Inc.", type: "Stock" });
+    expect(hits[1]).toEqual({ symbol: "SPY", exchange: "", name: "SPDR S&P 500", type: "ETF" });
     expect(hits.map((h) => h.symbol)).not.toContain("BTC/USD");
     expect(hits.map((h) => h.symbol)).not.toContain("XYZ");
-    expect(hits.length).toBe(8);
+    expect(hits.length).toBe(10);
   });
 
   it("throws a readable error on HTTP failure", async () => {
@@ -57,8 +59,8 @@ describe("searchStocks", () => {
     ];
     const fetcher: Fetcher = async () => json({ data });
     expect(await searchStocks("a", { fetcher })).toEqual([
-      { symbol: "AAPL", name: "Apple Inc.", type: "Stock" },
-      { symbol: "MSFT", name: "Microsoft", type: "Stock" },
+      { symbol: "AAPL", exchange: "", name: "Apple Inc.", type: "Stock" },
+      { symbol: "MSFT", exchange: "", name: "Microsoft", type: "Stock" },
     ]);
   });
 
@@ -67,5 +69,55 @@ describe("searchStocks", () => {
       throw Object.assign(new Error("aborted"), { name: "AbortError" });
     };
     await expect(searchStocks("apple", { fetcher })).rejects.toThrow();
+  });
+
+  describe("Indian listings", () => {
+    const fixture = JSON.parse(
+      readFileSync(join(__dirname, "fixtures/stockanalysis-search-reliance.json"), "utf8"),
+    ) as unknown;
+    const fetcher: Fetcher = async () => json(fixture);
+
+    it("returns NSE and BSE listings with their exchange", async () => {
+      const hits = await searchStocks("reliance", { fetcher });
+      expect(hits).toContainEqual({
+        symbol: "RELIANCE",
+        exchange: "NSE",
+        name: "Reliance Industries Limited",
+        type: "Stock",
+      });
+      expect(hits).toContainEqual({
+        symbol: "500325",
+        exchange: "BOM",
+        name: "Reliance Industries Limited",
+        type: "Stock",
+      });
+      expect(hits).toContainEqual({ symbol: "RS", exchange: "", name: "Reliance, Inc.", type: "Stock" });
+      expect(hits.find((h) => h.symbol === "GOLDBEES")).toMatchObject({ exchange: "NSE", type: "ETF" });
+    });
+
+    it("drops foreign venues and caps at 10, preserving order", async () => {
+      const hits = await searchStocks("reliance", { fetcher });
+      const symbols = hits.map((h) => h.symbol);
+      for (const foreign of ["RWC", "RLLWF", "FSRL", "RELIANCINS", "RELI", "6027"]) {
+        expect(symbols).not.toContain(foreign);
+      }
+      expect(hits.length).toBeLessThanOrEqual(10);
+      expect(symbols.indexOf("RELIANCE")).toBeLessThan(symbols.indexOf("500325"));
+    });
+
+    it("keeps the same ticker on different exchanges as separate hits", async () => {
+      const data = [
+        { s: "nse/ABC", n: "Abc NSE", t: "sy", st: "s" },
+        { s: "BOM/ABC", n: "Abc BSE", t: "sy", st: "s" },
+        { s: "nse/ABC", n: "Abc again", t: "sy", st: "s" },
+        { s: "nse/XYZ", n: "Index", t: "sy", st: "i" },
+        { s: "nse/QQQ", n: "Wrong t", t: "s", st: "s" },
+      ];
+      const hits = await searchStocks("abc", { fetcher: async () => json({ data }) });
+      expect(hits).toEqual([
+        { symbol: "ABC", exchange: "NSE", name: "Abc NSE", type: "Stock" },
+        { symbol: "ABC", exchange: "BOM", name: "Abc BSE", type: "Stock" },
+      ]);
+    });
   });
 });
