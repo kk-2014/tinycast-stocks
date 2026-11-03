@@ -1,5 +1,5 @@
 import { extractBlobs, walk } from "./blobs";
-import type { Analyst, Candle, FailureKind, MarketHours, NewsItem, ParseResult, Peer, Quote, Session, Stats } from "./types";
+import type { Analyst, Candle, Extended, FailureKind, MarketHours, NewsItem, ParseResult, Peer, Quote, Session, Stats } from "./types";
 
 export const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const isStr = (x: unknown): x is string => typeof x === "string";
@@ -214,6 +214,21 @@ function findMarketHours(entry: unknown[]): MarketHours | undefined {
   return open !== undefined && close !== undefined && close > open ? { open, close } : undefined;
 }
 
+/**
+ * `entry[16]` = `[price, change, pct, …]` and `entry[18]` = `[timestamp]`. Google also fills slot 16 during the
+ * regular session (with a tick stamped open + 1s), so the slot alone proves nothing: it is an extended-hours quote
+ * only when its timestamp falls outside the session window. At or after the close is verified against a real
+ * after-hours page (change is relative to the regular close). Before the open is INFERRED from that and
+ * UNVERIFIED until a real pre-market page is captured.
+ */
+function findExtended(entry: unknown[], hours: MarketHours | undefined): Extended | undefined {
+  const q = entry[16];
+  const ts = Array.isArray(entry[18]) ? entry[18][0] : undefined;
+  if (!hours || !Array.isArray(q) || !isNum(q[0]) || !isNum(q[1]) || !isNum(q[2]) || !isNum(ts)) return undefined;
+  const label = ts >= hours.close ? "After hours" : ts < hours.open ? "Pre-market" : undefined;
+  return label ? { label, price: q[0], change: q[1], changePercent: q[2], at: ts } : undefined;
+}
+
 /** "StrongBuy" -> "Strong Buy" */
 const prettyRating = (r: string) => r.replace(/([a-z])([A-Z])/g, "$1 $2");
 
@@ -328,6 +343,7 @@ function parseUnsafe(html: string, symbol: string, exchange: string): ParseResul
 
   const candles = findChartCandles(blobs, symbol, exchange);
 
+  const marketHours = findMarketHours(entry);
   const quote: Quote = {
     symbol,
     exchange,
@@ -343,7 +359,8 @@ function parseUnsafe(html: string, symbol: string, exchange: string): ParseResul
     intraday: candles.get(300) ?? [],
     daily: candles.get(86400) ?? [],
     news: findNews(blobs, symbol, isStr(profile?.[1]) ? (profile[1] as string) : (entry[2] as string).split(/\s+/)[0]),
-    marketHours: findMarketHours(entry),
+    marketHours,
+    extended: findExtended(entry, marketHours),
     analyst: findAnalyst(blobs, entry[4] as string),
     peers: findPeers(blobs, symbol, exchange),
     session: extractSession(html),

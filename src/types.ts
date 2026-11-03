@@ -40,6 +40,16 @@ export interface MarketHours {
   close: number;
 }
 
+/** Pre-market or after-hours quote; `change` and `changePercent` are relative to the regular close. */
+export interface Extended {
+  label: "After hours" | "Pre-market";
+  price: number;
+  change: number;
+  changePercent: number;
+  /** Unix epoch seconds of the extended quote */
+  at: number;
+}
+
 export interface Analyst {
   targetLow: number;
   targetHigh: number;
@@ -88,6 +98,7 @@ export interface Quote {
   daily: Candle[];
   news: NewsItem[];
   marketHours?: MarketHours;
+  extended?: Extended;
   analyst?: Analyst;
   /** Related tickers (may be empty) */
   peers: Peer[];

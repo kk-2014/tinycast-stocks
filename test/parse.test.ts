@@ -247,3 +247,61 @@ describe("parseGoogleFinance: optional insights", () => {
     expect(r.quote.stats.dividendYield).toBeUndefined();
   });
 });
+
+describe("parseGoogleFinance: extended-hours quote", () => {
+  const afterHoursHtml = readFileSync(join(__dirname, "fixtures/AAPL-NASDAQ-afterhours-2026-11-03.html"), "utf8");
+  const relianceHtml = readFileSync(join(__dirname, "fixtures/RELIANCE-NSE.html"), "utf8");
+
+  it("reads the after-hours quote while keeping the regular close as the headline price", () => {
+    const r = parseGoogleFinance(afterHoursHtml, "AAPL", "NASDAQ");
+    if (!r.ok) throw new Error(r.reason);
+    const q = r.quote;
+    expect(q.price).toBeCloseTo(331.9, 2);
+    expect(q.updatedAt).toBe(1793742265);
+    expect(q.marketHours?.close).toBe(1793739600);
+    expect(q.extended).toMatchObject({ label: "After hours", price: 330.06, at: 1793742265 });
+    expect(q.extended?.change).toBeCloseTo(-1.84, 2);
+    expect(q.extended?.changePercent).toBeCloseTo(-0.5544, 3);
+    // the extended change is measured against the regular close
+    expect(q.price + (q.extended?.change ?? 0)).toBeCloseTo(q.extended?.price ?? 0, 2);
+  });
+
+  it("does not report a regular-session tick as an extended quote", () => {
+    expect(parsed().extended).toBeUndefined();
+  });
+
+  it("has no extended quote when the market is closed and the slot is empty", () => {
+    const r = parseGoogleFinance(relianceHtml, "RELIANCE", "NSE");
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.quote.extended).toBeUndefined();
+  });
+
+  describe("synthetic pre-market shape (inferred, unverified against a real page)", () => {
+    const epoch = (h: number, min: number) => Date.UTC(1970, 0, 1, h, min) / 1000 + 18000;
+    const openEpoch = epoch(9, 30);
+    const window = [[1, [1970, 1, 1, 9, 30, null, null, [-18000]], [1970, 1, 1, 16, null, null, null, [-18000]]]];
+    const entryAt = (ts: number, win: unknown = window) => [
+      "/m/x", ["ZZZ", "NASDAQ"], "Zed Corp", 0, "USD", [10, 0.5, 5.26, 2, 2, 2], null, 9.5,
+      null, null, null, [1000], null, -18000, null, null,
+      [10.4, 0.4, 4, 2, 2, 2], [900], [ts], win,
+    ];
+    const run = (entry: unknown[]) => {
+      const r = parseGoogleFinance(blob(entry), "ZZZ", "NASDAQ");
+      if (!r.ok) throw new Error(r.reason);
+      return r.quote;
+    };
+
+    it("labels a quote stamped before the open as Pre-market", () => {
+      const q = run(entryAt(openEpoch - 3600));
+      expect(q.extended).toEqual({ label: "Pre-market", price: 10.4, change: 0.4, changePercent: 4, at: openEpoch - 3600 });
+    });
+
+    it("ignores a quote stamped inside the session window", () => {
+      expect(run(entryAt(openEpoch + 60)).extended).toBeUndefined();
+    });
+
+    it("ignores the slot when the session window is missing", () => {
+      expect(run(entryAt(openEpoch - 3600, null)).extended).toBeUndefined();
+    });
+  });
+});
