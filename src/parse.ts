@@ -1,5 +1,5 @@
 import { extractBlobs, walk } from "./blobs";
-import type { Candle, NewsItem, ParseResult, Quote, Session, Stats } from "./types";
+import type { Candle, FailureKind, NewsItem, ParseResult, Quote, Session, Stats } from "./types";
 
 export const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const isStr = (x: unknown): x is string => typeof x === "string";
@@ -106,6 +106,53 @@ function findChartCandles(blobs: unknown[], symbol: string, exchange: string): M
     if (candles.length > (byInterval.get(interval)?.length ?? 0)) byInterval.set(interval, candles);
   }
   return byInterval;
+}
+
+export type BatchResult =
+  | { ok: true; candles: Candle[] }
+  | { ok: false; kind: FailureKind; reason: string };
+
+const layoutFailure = (reason: string): BatchResult => ({ ok: false, kind: "layout", reason });
+
+function parseBatchUnsafe(text: string, symbol: string, exchange: string): BatchResult {
+  let sawRpc = false;
+  let best: Candle[] = [];
+  for (const line of text.replace(/^\)\]\}'/, "").split("\n")) {
+    if (!line.startsWith("[")) continue;
+    let chunk: unknown;
+    try {
+      chunk = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(chunk)) continue;
+    for (const item of chunk) {
+      if (!Array.isArray(item) || item[0] !== "wrb.fr" || item[1] !== "c2u4wc" || typeof item[2] !== "string") continue;
+      sawRpc = true;
+      let payload: unknown;
+      try {
+        payload = JSON.parse(item[2]);
+      } catch {
+        return layoutFailure("Google Finance returned chart data in an unexpected format.");
+      }
+      for (const candles of findChartCandles([payload], symbol, exchange).values()) {
+        if (candles.length > best.length) best = candles;
+      }
+    }
+  }
+  if (!sawRpc) return layoutFailure("Google Finance returned no chart data (the response layout may have changed).");
+  if (best.length === 0) return layoutFailure(`No ${symbol}:${exchange} chart candles found in the response.`);
+  return { ok: true, candles: best };
+}
+
+/** Decodes a `batchexecute` chart response (`)]}'` + length-prefixed chunks). Never throws. */
+export function parseBatchExecute(text: string, symbol: string, exchange: string): BatchResult {
+  try {
+    return parseBatchUnsafe(text, symbol, exchange);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return layoutFailure(`Unexpected error while parsing the chart response: ${message}`);
+  }
 }
 
 const MAX_NEWS = 20;

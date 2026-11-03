@@ -10,7 +10,7 @@ export interface FetchResponse {
 
 export type Fetcher = (
   url: string,
-  init: { headers: Record<string, string>; signal?: AbortSignal },
+  init: { headers: Record<string, string>; signal?: AbortSignal; method?: string; body?: string },
 ) => Promise<FetchResponse>;
 
 export const defaultFetcher: Fetcher = (url, init) => fetch(url, init);
