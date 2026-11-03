@@ -7,6 +7,8 @@ import type { FetchResponse, Fetcher } from "../src/http";
 
 const html = readFileSync(join(__dirname, "fixtures/AAPL-NASDAQ-2026-11-03.html"), "utf8");
 
+const reliance = readFileSync(join(__dirname, "fixtures/RELIANCE-NSE.html"), "utf8");
+
 const page = (body: string, status = 200, url = "https://www.google.com/finance/quote/x"): FetchResponse => ({
   ok: status >= 200 && status < 300,
   status,
@@ -143,5 +145,40 @@ describe("googleFinanceSearchUrl", () => {
   it("builds an encoded search URL", () => {
     expect(googleFinanceSearchUrl("BRK.B")).toBe("https://www.google.com/finance/?q=BRK.B");
     expect(googleFinanceSearchUrl("A B&C")).toBe("https://www.google.com/finance/?q=A%20B%26C");
+  });
+});
+
+describe("fetchQuote with an explicit exchange", () => {
+  it("fetches only that exchange", async () => {
+    const calls: string[] = [];
+    const fetcher: Fetcher = async (url) => (calls.push(url), page(reliance));
+    const r = await fetchQuote("reliance", { fetcher, exchange: "nse" });
+    expect(r.ok && r.quote.exchange).toBe("NSE");
+    expect(calls).toEqual([quoteUrl("RELIANCE", "NSE")]);
+  });
+
+  it("works for BOM with the exchange taken from the URL", async () => {
+    const calls: string[] = [];
+    const fetcher: Fetcher = async (url) => (calls.push(url), page(reliance.replaceAll("NSE", "BOM")));
+    const r = await fetchQuote("RELIANCE", { fetcher, exchange: "BOM" });
+    expect(r.ok && r.quote.exchange).toBe("BOM");
+    expect(calls).toEqual([quoteUrl("RELIANCE", "BOM")]);
+  });
+
+  it("does not probe other exchanges on a 404", async () => {
+    const calls: string[] = [];
+    const fetcher: Fetcher = async (url) => (calls.push(url), page("", 404));
+    const r = await fetchQuote("RELIANCE", { fetcher, exchange: "NSE" });
+    expect(!r.ok && r.kind).toBe("not-found");
+    expect(calls.length).toBe(1);
+  });
+
+  it("ignores remembered hints", async () => {
+    const hints = memoryKV();
+    await hints.set("exchange:RELIANCE", "NYSE");
+    const calls: string[] = [];
+    const fetcher: Fetcher = async (url) => (calls.push(url), page(reliance));
+    await fetchQuote("RELIANCE", { fetcher, hints, exchange: "NSE" });
+    expect(calls).toEqual([quoteUrl("RELIANCE", "NSE")]);
   });
 });

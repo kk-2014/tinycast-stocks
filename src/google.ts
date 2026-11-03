@@ -23,6 +23,8 @@ export interface FetchQuoteOptions {
   /** Remembers which exchange worked for a symbol. */
   hints?: KV;
   signal?: AbortSignal;
+  /** Probe only this exchange (e.g. "NSE", "BOM"); skips hints and the default exchange list. */
+  exchange?: string;
 }
 
 /**
@@ -33,8 +35,9 @@ export interface FetchQuoteOptions {
 export async function fetchQuote(symbol: string, options: FetchQuoteOptions = {}): Promise<ParseResult> {
   const fetcher = options.fetcher ?? defaultFetcher;
   const sym = symbol.toUpperCase();
-  const hint = await options.hints?.get(`exchange:${sym}`);
-  const order = [...(hint ? [hint] : []), ...EXCHANGES.filter((e) => e !== hint)];
+  const explicit = options.exchange?.toUpperCase();
+  const hint = explicit ? undefined : await options.hints?.get(`exchange:${sym}`);
+  const order = explicit ? [explicit] : [...(hint ? [hint] : []), ...EXCHANGES.filter((e) => e !== hint)];
 
   let last: ParseResult = { ok: false, kind: "not-found", reason: `No Google Finance listing found for ${sym}.` };
   let sawNotFound = false;
