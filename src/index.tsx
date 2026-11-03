@@ -2,8 +2,8 @@ import { Action, ActionPanel, Color, Icon, List, LocalStorage } from "@raycast/a
 import { Fragment, useEffect, useState } from "react";
 import { buildChartSvg } from "./chart";
 import { chartMarkdown } from "./chartImage";
-import { compact, money, signed, timeAgo } from "./format";
-import { FAVORITES_KEY, parseFavs, toggleFav, type Fav } from "./favorites";
+import { compactFor, money, signed, timeAgo } from "./format";
+import { FAVORITES_KEY, favKey, parseFavs, toggleFav, type Fav } from "./favorites";
 import { googleFinanceSearchUrl, quoteUrl } from "./google";
 import { searchStocks, type SearchHit } from "./search";
 import type { Quote } from "./types";
@@ -49,9 +49,9 @@ function QuoteDetail({ state, range }: { state: QuoteState | undefined; range: R
       label("Prev Close", money(q.previousClose, q.currency)),
     ],
     [
-      label("Market Cap", num(s.marketCap, compact)),
-      label("Volume", num(s.volume, compact)),
-      label("Avg Volume", num(s.avgVolume, compact)),
+      label("Market Cap", num(s.marketCap, compactFor(q.currency))),
+      label("Volume", num(s.volume, compactFor(q.currency))),
+      label("Avg Volume", num(s.avgVolume, compactFor(q.currency))),
     ],
     [
       label("52-Wk High", num(s.yearHigh, price)),
@@ -61,8 +61,8 @@ function QuoteDetail({ state, range }: { state: QuoteState | undefined; range: R
       label("Beta", num(s.beta, (n) => n.toFixed(2))),
     ],
     [
-      label("Shares Out", num(s.sharesOutstanding, compact)),
-      label("Employees", num(s.employees, (n) => n.toLocaleString("en-US"))),
+      label("Shares Out", num(s.sharesOutstanding, compactFor(q.currency))),
+      label("Employees", num(s.employees, (n) => n.toLocaleString(q.currency === "INR" ? "en-IN" : "en-US"))),
     ],
   ].filter((group) => group.some((item) => item !== null));
 
@@ -127,14 +127,21 @@ export default function Command() {
     };
   }, [query]);
 
-  const quoteState = useQuote(selected, refreshKey);
+  const rows: Fav[] = query.trim()
+    ? hits.map((h) => ({ symbol: h.symbol, name: h.name, ...(h.exchange ? { exchange: h.exchange } : {}) }))
+    : favs;
+  const selectedRow = rows.find((r) => favKey(r) === selected);
+  const quoteState = useQuote(selectedRow?.symbol, selectedRow?.exchange, refreshKey);
 
-  const rows: Fav[] = query.trim() ? hits.map((h) => ({ symbol: h.symbol, name: h.name })) : favs;
   useEffect(() => {
     if (rows.length === 0) setSelected(undefined);
   }, [rows.length]);
 
-  const isFav = (symbol: string) => favs.some((f) => f.symbol === symbol);
+  const isFav = (row: Fav) => favs.some((f) => favKey(f) === favKey(row));
+  const stateFor = (row: Fav) =>
+    quoteState?.symbol === row.symbol && quoteState.exchange === (row.exchange ?? "") ? quoteState : undefined;
+  const exchangeTag = (exchange: string | undefined): List.Item.Accessory[] =>
+    exchange === "NSE" ? [{ tag: "NSE" }] : exchange === "BOM" ? [{ tag: "BSE" }] : [];
 
   async function toggleFavorite(fav: Fav) {
     const next = toggleFav(favs, fav);
@@ -162,21 +169,31 @@ export default function Command() {
         />
       ) : (
         <List.Section title={query.trim() ? "Search Results" : "Favorites"}>
-          {rows.map((row) => (
+          {rows.map((row) => {
+            const rowState = stateFor(row);
+            return (
             <List.Item
-              key={row.symbol}
-              id={row.symbol}
+              key={favKey(row)}
+              id={favKey(row)}
               title={row.symbol}
               subtitle={row.name}
-              accessories={isFav(row.symbol) ? [{ icon: { source: Icon.Star, tintColor: Color.Yellow } }] : []}
-              detail={<QuoteDetail state={quoteState?.symbol === row.symbol ? quoteState : undefined} range={range} />}
+              accessories={[
+                ...exchangeTag(row.exchange),
+                ...(isFav(row) ? [{ icon: { source: Icon.Star, tintColor: Color.Yellow } }] : []),
+              ]}
+              detail={<QuoteDetail state={rowState} range={range} />}
               actions={
                 <ActionPanel>
-                  <Action.OpenInBrowser title="Open in Google Finance" url={
-                      quoteState?.status === "done" && quoteState.result.ok && quoteState.symbol === row.symbol
-                        ? quoteUrl(row.symbol, quoteState.result.quote.exchange)
-                        : googleFinanceSearchUrl(row.symbol)
-                    } />
+                  <Action.OpenInBrowser
+                    title="Open in Google Finance"
+                    url={
+                      row.exchange
+                        ? quoteUrl(row.symbol, row.exchange)
+                        : rowState?.status === "done" && rowState.result.ok
+                          ? quoteUrl(row.symbol, rowState.result.quote.exchange)
+                          : googleFinanceSearchUrl(row.symbol)
+                    }
+                  />
                   <Action
                     title={range === "1D" ? "Show 1-Month Chart" : "Show 1-Day Chart"}
                     icon={Icon.LineChart}
@@ -184,7 +201,7 @@ export default function Command() {
                     onAction={() => setRange(range === "1D" ? "1M" : "1D")}
                   />
                   <Action
-                    title={isFav(row.symbol) ? "Remove from Favorites" : "Add to Favorites"}
+                    title={isFav(row) ? "Remove from Favorites" : "Add to Favorites"}
                     icon={Icon.Star}
                     shortcut={{ modifiers: ["cmd", "shift"], key: "f" }}
                     onAction={() => toggleFavorite(row)}
@@ -195,16 +212,17 @@ export default function Command() {
                     shortcut={{ modifiers: ["cmd"], key: "r" }}
                     onAction={() => setRefreshKey((k) => k + 1)}
                   />
-                  {quoteState?.status === "done" && quoteState.result.ok && quoteState.symbol === row.symbol && (
+                  {rowState?.status === "done" && rowState.result.ok && (
                     <Action.CopyToClipboard
                       title="Copy Price"
-                      content={quoteState.result.quote.price.toFixed(2)}
+                      content={rowState.result.quote.price.toFixed(2)}
                     />
                   )}
                 </ActionPanel>
               }
             />
-          ))}
+            );
+          })}
         </List.Section>
       )}
     </List>

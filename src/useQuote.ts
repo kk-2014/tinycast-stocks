@@ -8,11 +8,11 @@ const QUOTE_TTL_MS = 60_000;
 const SELECTION_DEBOUNCE_MS = 250;
 
 export type QuoteState =
-  | { symbol: string; status: "loading" }
-  | { symbol: string; status: "done"; result: ParseResult };
+  | { symbol: string; exchange: string; status: "loading" }
+  | { symbol: string; exchange: string; status: "done"; result: ParseResult };
 
 /** Fetches the quote for `symbol` once the selection settles. Cancels in-flight work on change. */
-export function useQuote(symbol: string | undefined, refreshKey = 0): QuoteState | undefined {
+export function useQuote(symbol: string | undefined, exchange: string = "", refreshKey = 0): QuoteState | undefined {
   const [state, setState] = useState<QuoteState>();
   const handledRef = useRef(refreshKey);
 
@@ -25,14 +25,14 @@ export function useQuote(symbol: string | undefined, refreshKey = 0): QuoteState
     const force = refreshKey !== handledRef.current;
     handledRef.current = refreshKey;
     const abort = new AbortController();
-    setState({ symbol, status: "loading" });
+    setState({ symbol, exchange, status: "loading" });
 
     const timer = setTimeout(async () => {
       try {
-        const cacheKey = `quote:v1:${symbol}`;
+        const cacheKey = `quote:v2:${exchange}:${symbol}`;
         const stored = force ? undefined : await getFresh<ParseResult>(raycastKV, cacheKey, QUOTE_TTL_MS);
         const cached = typeof stored === "object" && stored !== null && typeof stored.ok === "boolean" ? stored : undefined;
-        const result = cached ?? (await fetchQuote(symbol, { hints: raycastKV, signal: abort.signal }));
+        const result = cached ?? (await fetchQuote(symbol, { hints: raycastKV, signal: abort.signal, ...(exchange ? { exchange } : {}) }));
         if (!cached && (result.ok || result.kind === "not-found")) {
           try {
             await putFresh(raycastKV, cacheKey, result);
@@ -40,11 +40,11 @@ export function useQuote(symbol: string | undefined, refreshKey = 0): QuoteState
             // Caching is best-effort; never let it turn a good quote into an error.
           }
         }
-        if (!abort.signal.aborted) setState({ symbol, status: "done", result });
+        if (!abort.signal.aborted) setState({ symbol, exchange, status: "done", result });
       } catch (error) {
         if (abort.signal.aborted) return;
         const reason = error instanceof Error ? error.message : String(error);
-        setState({ symbol, status: "done", result: { ok: false, kind: "network", reason } });
+        setState({ symbol, exchange, status: "done", result: { ok: false, kind: "network", reason } });
       }
     }, SELECTION_DEBOUNCE_MS);
 
@@ -52,7 +52,7 @@ export function useQuote(symbol: string | undefined, refreshKey = 0): QuoteState
       clearTimeout(timer);
       abort.abort();
     };
-  }, [symbol, refreshKey]);
+  }, [symbol, exchange, refreshKey]);
 
   return state;
 }
