@@ -1,0 +1,59 @@
+export interface Candle {
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+  /** ISO-8601 with offset, e.g. 2026-11-03T09:30:00-05:00 */
+  time: string;
+  volume: number;
+}
+
+export interface NewsItem {
+  url: string;
+  title: string;
+  source: string;
+  /** Unix epoch seconds */
+  publishedAt: number;
+}
+
+export interface Stats {
+  open?: number;
+  high?: number;
+  low?: number;
+  marketCap?: number;
+  volume?: number;
+  avgVolume?: number;
+  yearHigh?: number;
+  yearLow?: number;
+  peRatio?: number;
+  eps?: number;
+  beta?: number;
+  sharesOutstanding?: number;
+  employees?: number;
+}
+
+export interface Quote {
+  symbol: string;
+  exchange: string;
+  name: string;
+  currency: string;
+  price: number;
+  change: number;
+  changePercent: number;
+  previousClose: number;
+  /** Unix epoch seconds of the quote, if present */
+  updatedAt?: number;
+  description?: string;
+  stats: Stats;
+  /** 5-minute candles for the current session (may be empty) */
+  intraday: Candle[];
+  /** Daily candles, about one month (may be empty) */
+  daily: Candle[];
+  news: NewsItem[];
+}
+
+export type FailureKind = "layout" | "not-found" | "blocked" | "network";
+
+export type ParseResult =
+  | { ok: true; quote: Quote }
+  | { ok: false; kind: FailureKind; reason: string };
