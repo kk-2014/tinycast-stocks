@@ -7,9 +7,22 @@ export function compact(n: number): string {
   return String(Math.round(n));
 }
 
+/** Lakh/crore scale: 1 L = 1e5, 1 Cr = 1e7, 1 L Cr = 1e12. */
+export function compactIndian(n: number): string {
+  const a = Math.abs(n);
+  if (a >= 1e12) return `${(n / 1e12).toFixed(2)}L Cr`;
+  if (a >= 1e7) return `${(n / 1e7).toFixed(2)} Cr`;
+  if (a >= 1e5) return `${(n / 1e5).toFixed(2)} L`;
+  return String(Math.round(n));
+}
+
+export function compactFor(currency: string): (n: number) => string {
+  return currency === "INR" ? compactIndian : compact;
+}
+
 export function money(n: number, currency: string): string {
   try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(n);
+    return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", { style: "currency", currency }).format(n);
   } catch {
     return `${n.toFixed(2)} ${currency}`;
   }

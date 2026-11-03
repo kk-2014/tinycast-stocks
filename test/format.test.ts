@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compact, money, signed, timeAgo } from "../src/format";
+import { compact, compactFor, compactIndian, money, signed, timeAgo } from "../src/format";
 
 describe("compact", () => {
   it.each([
@@ -11,8 +11,30 @@ describe("compact", () => {
   ])("%d -> %s", (n, out) => expect(compact(n)).toBe(out));
 });
 
+describe("compactIndian", () => {
+  it.each([
+    [17_671_030_535_424, "17.67L Cr"],
+    [42_319_913, "4.23 Cr"],
+    [6_338_512_384, "633.85 Cr"],
+    [250_000, "2.50 L"],
+    [99_999, "99999"],
+    [-2_500_000, "-25.00 L"],
+  ])("%d -> %s", (n, out) => expect(compactIndian(n)).toBe(out));
+});
+
+describe("compactFor", () => {
+  it("picks the Indian scale for INR only", () => {
+    expect(compactFor("INR")).toBe(compactIndian);
+    expect(compactFor("USD")).toBe(compact);
+  });
+});
+
 describe("money", () => {
   it("formats USD", () => expect(money(331.775, "USD")).toBe("$331.78"));
+  it("formats INR with lakh grouping", () => {
+    expect(money(1307.9, "INR")).toBe("₹1,307.90");
+    expect(money(1307900, "INR")).toBe("₹13,07,900.00");
+  });
   it("falls back for an invalid currency code", () => expect(money(1.5, "ZZZZ")).toBe("1.50 ZZZZ"));
 });
 
