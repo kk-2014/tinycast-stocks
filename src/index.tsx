@@ -1,32 +1,44 @@
 import { Action, ActionPanel, Color, Icon, List, LocalStorage } from "@raycast/api";
 import { Fragment, useEffect, useState } from "react";
-import { buildChartSvg } from "./chart";
+import { buildChartSvg, rangeChange } from "./chart";
 import { chartMarkdown } from "./chartImage";
 import { compactFor, money, signed, timeAgo } from "./format";
 import { FAVORITES_KEY, favKey, parseFavs, toggleFav, type Fav } from "./favorites";
 import { googleFinanceSearchUrl, quoteUrl } from "./google";
 import { searchStocks, type SearchHit } from "./search";
+import { RANGES, type RangeId } from "./ranges";
 import type { Quote } from "./types";
+import { useChart, type ChartState } from "./useChart";
 import { useQuote, type QuoteState } from "./useQuote";
-
-type Range = "1D" | "1M";
 
 const SEARCH_DEBOUNCE_MS = 200;
 
-function detailMarkdown(q: Quote, range: Range): string {
-  const candles = range === "1D" ? q.intraday : q.daily;
-  const svg = buildChartSvg(candles, { previousClose: range === "1D" ? q.previousClose : undefined });
+function detailMarkdown(q: Quote, range: RangeId, chart: ChartState): string {
+  const rangeLabel = RANGES.find((r) => r.id === range)?.label ?? range;
   const color = q.change >= 0 ? "🟢" : "🔴";
   const updated = q.updatedAt ? ` · updated ${timeAgo(q.updatedAt)}` : "";
   const head = `# ${q.name} (${q.symbol})\n\n${color} **${money(q.price, q.currency)}**  ${signed(q.change)} (${signed(q.changePercent)}%)${updated}`;
-  const chart = chartMarkdown(svg, candles, `${q.symbol}-${range}`);
+  let chartBlock: string;
+  let caption = "";
+  if (chart.loading) {
+    chartBlock = `_Loading ${rangeLabel} chart…_`;
+  } else if (chart.error !== undefined || !chart.candles) {
+    chartBlock = `_Chart unavailable: ${chart.error ?? "no data"}_`;
+  } else {
+    const svg = buildChartSvg(chart.candles, { previousClose: range === "1D" ? q.previousClose : undefined });
+    chartBlock = chartMarkdown(svg, chart.candles, `${q.symbol}-${range}`);
+    const change = rangeChange(chart.candles, range === "1D" ? q.previousClose : undefined);
+    if (change) caption = `\n\n_${rangeLabel}: ${signed(change.abs)} (${signed(change.pct)}%)_`;
+  }
   const news = q.news.length
     ? q.news.map((n) => `- [${n.title}](${n.url}) — ${n.source} · ${timeAgo(n.publishedAt)}`).join("\n")
     : "_No news found._";
-  return `${head}\n\n${chart}\n\n_Range: ${range}_\n\n### News\n\n${news}`;
+  return `${head}\n\n${chartBlock}${caption}\n\n### News\n\n${news}`;
 }
 
-function QuoteDetail({ state, range }: { state: QuoteState | undefined; range: Range }) {
+function QuoteDetail({ state, range }: { state: QuoteState | undefined; range: RangeId }) {
+  const quote = state?.status === "done" && state.result.ok ? state.result.quote : undefined;
+  const chart = useChart(quote, range);
   if (!state || state.status === "loading") return <List.Item.Detail isLoading markdown="Loading quote…" />;
   const result = state.result;
   if (!result.ok) {
@@ -68,7 +80,7 @@ function QuoteDetail({ state, range }: { state: QuoteState | undefined; range: R
 
   return (
     <List.Item.Detail
-      markdown={detailMarkdown(q, range)}
+      markdown={detailMarkdown(q, range, chart)}
       metadata={
         <List.Item.Detail.Metadata>
           {groups.map((group, i) => (
@@ -90,7 +102,7 @@ export default function Command() {
   const [searchError, setSearchError] = useState<string>();
   const [favs, setFavs] = useState<Fav[]>([]);
   const [selected, setSelected] = useState<string>();
-  const [range, setRange] = useState<Range>("1D");
+  const [range, setRange] = useState<RangeId>("1D");
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -194,11 +206,22 @@ export default function Command() {
                           : googleFinanceSearchUrl(row.symbol)
                     }
                   />
+                  <ActionPanel.Section title="Chart Range">
+                    {RANGES.map((r, i) => (
+                      <Action
+                        key={r.id}
+                        title={`${r.id === range ? "✓ " : ""}${r.label}`}
+                        icon={Icon.LineChart}
+                        shortcut={{ modifiers: ["cmd"], key: String(i + 1) as "1" }}
+                        onAction={() => setRange(r.id)}
+                      />
+                    ))}
+                  </ActionPanel.Section>
                   <Action
-                    title={range === "1D" ? "Show 1-Month Chart" : "Show 1-Day Chart"}
-                    icon={Icon.LineChart}
+                    title="Next Range"
+                    icon={Icon.ArrowRight}
                     shortcut={{ modifiers: ["cmd"], key: "t" }}
-                    onAction={() => setRange(range === "1D" ? "1M" : "1D")}
+                    onAction={() => setRange(RANGES[(RANGES.findIndex((r) => r.id === range) + 1) % RANGES.length].id)}
                   />
                   <Action
                     title={isFav(row) ? "Remove from Favorites" : "Add to Favorites"}
