@@ -1,5 +1,5 @@
 import { extractBlobs, walk } from "./blobs";
-import type { Candle, NewsItem, ParseResult, Quote, Stats } from "./types";
+import type { Candle, NewsItem, ParseResult, Quote, Session, Stats } from "./types";
 
 export const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const isStr = (x: unknown): x is string => typeof x === "string";
@@ -150,6 +150,16 @@ function findNews(blobs: unknown[], symbol: string, companyShortName: string): N
   return [...byUrl.values()].sort((x, y) => y.publishedAt - x.publishedAt).slice(0, MAX_NEWS);
 }
 
+const DEFAULT_BASE = "/finance/_/FinHubUi";
+
+/** Pulls the batchexecute tokens (`FdrFJe`, `cfb2h`, `Im6cmf`) out of the page. Needs both sid and bl. */
+export function extractSession(html: string): Session | undefined {
+  const sid = /"FdrFJe":"([^"]+)"/.exec(html)?.[1];
+  const bl = /"cfb2h":"([^"]+)"/.exec(html)?.[1];
+  if (!sid || !bl) return undefined;
+  return { sid, bl, base: /"Im6cmf":"([^"]+)"/.exec(html)?.[1] ?? DEFAULT_BASE };
+}
+
 function parseUnsafe(html: string, symbol: string, exchange: string): ParseResult {
   const blobs = extractBlobs(html);
   if (blobs.length === 0) {
@@ -204,6 +214,7 @@ function parseUnsafe(html: string, symbol: string, exchange: string): ParseResul
     intraday: candles.get(300) ?? [],
     daily: candles.get(86400) ?? [],
     news: findNews(blobs, symbol, isStr(profile?.[1]) ? (profile[1] as string) : (entry[2] as string).split(/\s+/)[0]),
+    session: extractSession(html),
   };
   return { ok: true, quote };
 }

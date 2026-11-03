@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseGoogleFinance } from "../src/parse";
+import { extractSession, parseGoogleFinance } from "../src/parse";
 
 const html = readFileSync(join(__dirname, "fixtures/AAPL-NASDAQ-2026-11-03.html"), "utf8");
 
@@ -128,5 +128,32 @@ describe("parseGoogleFinance: scoping and robustness", () => {
       const r = parseGoogleFinance(i, "AAPL", "NASDAQ");
       expect(r.ok).toBe(false);
     }
+  });
+});
+
+describe("extractSession", () => {
+  it("reads sid, bl and base from the quote page", () => {
+    expect(extractSession(html)).toEqual({
+      sid: "8801222583360154613",
+      bl: "boq_finhub-uiserver_20261101.02_p0",
+      base: "/finance/_/FinHubUi",
+    });
+  });
+
+  it("returns undefined when the tokens are missing", () => {
+    expect(extractSession("<html>nothing here</html>")).toBeUndefined();
+    expect(extractSession('"FdrFJe":"123"')).toBeUndefined();
+  });
+
+  it("defaults base when only sid and bl are present", () => {
+    expect(extractSession('"FdrFJe":"1","cfb2h":"b"')).toEqual({ sid: "1", bl: "b", base: "/finance/_/FinHubUi" });
+  });
+
+  it("is attached to the parsed quote", () => {
+    expect(parsed().session).toEqual({
+      sid: "8801222583360154613",
+      bl: "boq_finhub-uiserver_20261101.02_p0",
+      base: "/finance/_/FinHubUi",
+    });
   });
 });

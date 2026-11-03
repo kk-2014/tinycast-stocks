@@ -32,6 +32,13 @@ export interface Stats {
   employees?: number;
 }
 
+/** Tokens from the quote page that Google's batchexecute RPC needs. */
+export interface Session {
+  sid: string;
+  bl: string;
+  base: string;
+}
+
 export interface Quote {
   symbol: string;
   exchange: string;
@@ -50,6 +57,8 @@ export interface Quote {
   /** Daily candles, about one month (may be empty) */
   daily: Candle[];
   news: NewsItem[];
+  /** Present when the page carried the RPC tokens needed for longer chart ranges */
+  session?: Session;
 }
 
 export type FailureKind = "layout" | "not-found" | "blocked" | "network";
