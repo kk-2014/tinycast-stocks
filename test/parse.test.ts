@@ -42,3 +42,26 @@ describe("parseGoogleFinance: failures", () => {
     expect(r).toMatchObject({ ok: false, kind: "not-found" });
   });
 });
+
+describe("parseGoogleFinance: stats", () => {
+  it("extracts trading data and profile stats", () => {
+    const s = parsed().stats;
+    expect(s.open).toBeCloseTo(325.58, 2);
+    expect(s.high).toBeCloseTo(334.5, 2);
+    expect(s.low).toBeCloseTo(325.33, 2);
+    expect(s.marketCap).toBeGreaterThan(4.8e12);
+    expect(s.volume).toBe(36283672);
+    expect(s.yearHigh).toBeCloseTo(351.73, 2);
+    expect(s.yearLow).toBeCloseTo(243.42, 2);
+    expect(s.peRatio).toBeCloseTo(36.95, 1);
+    expect(s.avgVolume).toBe(39698332);
+    expect(s.eps).toBeCloseTo(8.98, 1);
+    expect(s.beta).toBeCloseTo(1.07, 1);
+    expect(s.sharesOutstanding).toBe(14594180000);
+    expect(s.employees).toBe(166000);
+  });
+
+  it("extracts the company description", () => {
+    expect(parsed().description).toMatch(/^Apple Inc\./);
+  });
+});
