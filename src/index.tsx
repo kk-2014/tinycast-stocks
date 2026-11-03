@@ -2,6 +2,7 @@ import { Action, ActionPanel, Color, Icon, List, LocalStorage } from "@raycast/a
 import { Fragment, useEffect, useState } from "react";
 import { buildChartSvg, rangeChange } from "./chart";
 import { chartMarkdown } from "./chartImage";
+import { extendedLine } from "./extended";
 import { compactFor, money, signed, timeAgo } from "./format";
 import { FAVORITES_KEY, favKey, parseFavs, toggleFav, type Fav } from "./favorites";
 import { insightsMarkdown } from "./insights";
@@ -23,7 +24,8 @@ function detailMarkdown(q: Quote, range: RangeId, chart: ChartState): string {
   const status = marketStatus(q.marketHours, Date.now());
   const statusIcon = status?.state === "open" ? "🟢" : status?.state === "opens-later" ? "🟡" : "⚪";
   const statusLine = status ? `\n\n${statusIcon} ${status.label}` : "";
-  const head = `# ${q.name} (${q.symbol})\n\n${color} **${money(q.price, q.currency)}**  ${signed(q.change)} (${signed(q.changePercent)}%)${updated}${statusLine}`;
+  const extendedBlock = q.extended ? `\n\n${extendedLine(q.extended, q.currency)}` : "";
+  const head = `# ${q.name} (${q.symbol})\n\n${color} **${money(q.price, q.currency)}**  ${signed(q.change)} (${signed(q.changePercent)}%)${updated}${extendedBlock}${statusLine}`;
   let chartBlock: string;
   let caption = "";
   if (chart.loading) {
