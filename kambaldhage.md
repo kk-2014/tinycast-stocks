@@ -130,7 +130,7 @@ Notice the spec contains a *Risks* section that names both of the things that la
 - **More chart ranges.** Done, see section 10. (Originally the page only carried 1D and 1M, and we assumed a second data source was needed. We were wrong, which is the fun part.)
 - **Single-candle charts.** `buildChartSvg` returns `null` below 2 candles, so a pre-market session with one candle shows "No chart data available". A dot or a text note would be kinder.
 - **Non-US exchanges.** The probe list includes LON, TSE, NSE and others, but search is US-oriented and coverage is untested. Fixtures per region would settle it.
-- **Favorites prices, market status, insights.** Done, see section 11. Still pending: the pre/post-market price, waiting on a fixture captured outside regular hours.
+- **Favorites prices, market status, insights.** Done, see section 11. Extended-hours price: done (end of section 11); only the pre-market branch is still unverified, waiting on a fixture captured before the open.
 - **Real-time updates.** Right now you get a snapshot, refreshed by cache expiry or the Refresh action. Polling the highlighted row gently, with the same politeness rules, would make it feel alive.
 - **A scheduled live-check** so drift shows up in a weekly report instead of in a user's "Quote unavailable" panel.
 
@@ -205,7 +205,7 @@ Notice the spec contains a *Risks* section that names both of the things that la
 
 - **Dividend yield.** Profile index 17 held `0.3254875` for Apple. Apple pays $1.08 a year and trades at $331.775; 1.08 / 331.775 = 0.003255, i.e. 0.3255 *percent*. The number matched to four digits, so it is a percent, not a fraction. For Reliance it reads `0.4588`, which is sensible for a stock around 1,308 rupees.
 - **Analyst counts, and the Sell/Hold riddle.** The consensus array is `[name, currency, low, high, avg, pct, count, rating, c1, c2, c3, …]`. Apple's are `15, 5, 9` and the page also lists 40 individual analyst ratings: 23 Buy, 12 Hold, 5 Sell. Hold is always bigger than Sell there, so the 9 must be Hold and the 5 must be Sell. That means the order is Buy, Sell, Hold, which is not the order you would guess. Then Reliance showed up with `4, 0, 0`. Zero and zero cannot tell you which is which. We say so in a code comment instead of pretending to know.
-- **The `326.21` red herring.** We spotted a price near the day's open sitting in the entry (index 16) and wondered if it was the after-hours price. It was the price a few minutes into the session. Looking at when a number is *stamped* matters as much as its value.
+- **The `326.21` red herring.** We spotted a price near the day's open sitting in the entry (index 16) and wondered if it was the after-hours price. It was a regular-session tick. The full story, and how a later after-hours capture settled it, is in the extended-hours section below.
 
 **Market status from a window and a timezone.** The page holds the session as `[Y, M, D, h, min, null, null, [offsetSeconds]]`, twice (open and close), in the exchange's local time. Convert with `Date.UTC(Y, M-1, D, h, min ?? 0) / 1000 - offsetSeconds`. Two traps: months are 1-based in the data but 0-based in `Date.UTC`, and **minutes can be `null`**, which means 0 (Apple's close is `16, null`). Forgetting that gives `NaN` and a blank status. The status itself is a pure function of `(hours, now)`: open at `open <= now < close` (so the open instant counts, the close instant does not), "opens in X" before, "closed" after. Pure, so every boundary has a test and `now` is a parameter instead of a hidden clock.
 
@@ -215,4 +215,14 @@ Notice the spec contains a *Risks* section that names both of the things that la
 
 **Controlled search box.** The peer actions ("Go to NVDA") need to type into the search bar for you. That requires `searchText={query}` on the `<List>`, making the box controlled. The debounced search effect depends only on `query`, so setting it programmatically triggers the same search as typing.
 
-**Honest limits.** The Sell/Hold order is inferred, not proven. The after-hours price is not implemented because we have no fixture captured outside regular hours, and guessing an index without evidence is how wrong prices end up on screen. Everything here is also an undocumented layout that can shift; the shape predicates fail soft (a missing section, never a crash).
+**Honest limits.** The Sell/Hold order is inferred, not proven. Everything here is also an undocumented layout that can shift; the shape predicates fail soft (a missing section, never a crash).
+
+### The after-hours price: a number that was in the wrong room
+
+Remember `326.21`? Slot 16 of the quote entry holds a `[price, change, pct, ...]` triple, and in our mid-session fixture it read `[326.21, -5.60, -1.69]`. Tempting to call it "the extended-hours quote" and ship it. We didn't, and that was the right call: it was just a regular-session tick that Google keeps in the same slot (stamped at slot 18 as open + 1 second). Reporting it would have painted a phantom "After hours" price on every stock all day. It is like finding a coat in the lost-and-found and assuming it is yours because it looks right.
+
+Then we captured a page at 16:45 ET, genuinely during after-hours trading, and the puzzle cracked open. The regular close sat in slot 5 (`331.9`, up/down `-6.42` against the previous close of 338.32). Slot 16 now read `[330.06, -1.84, -0.554]`. The check that proves it is the same trick as always, an invariant: `331.9 - 330.06 = 1.84`. The extended change is measured against the *regular close*, not the previous day's close, so the headline price stays put and the after-hours move hangs off it.
+
+The rule that separates a real extended quote from a stray tick is the timestamp, slot 18. Extended only if the quote's time falls *outside* the session window `[open, close)`: at or after the close is "After hours", before the open is "Pre-market". Inside the window it is just trading, so we say nothing. The RELIANCE page (market closed) has `null` in both slots, which falls out of the same defensive checks, no special case needed. The UI shows it as one extra line under the regular price (`extendedLine` in `src/extended.ts`, pure and unit tested), and the favorites rows deliberately keep showing the regular price only.
+
+**The honest limit.** The pre-market branch (`ts < open`) is inferred by symmetry, not observed. Its synthetic test proves our logic, not Google's format. Until someone captures a real page before 09:30 ET, treat it as a well-reasoned guess. The code comment says so too.
