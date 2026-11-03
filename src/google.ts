@@ -59,6 +59,8 @@ export async function fetchQuote(symbol: string, options: FetchQuoteOptions = {}
     }
     if (!res.ok) continue;
 
+    // The parser cannot tell whether a page belongs to the requested symbol (peer quote entries appear on
+    // every page), so the URL's symbol/exchange is the source of truth.
     const parsed = parseGoogleFinance(await res.text(), sym, exchange);
     if (parsed.ok) {
       await options.hints?.set(`exchange:${sym}`, exchange);

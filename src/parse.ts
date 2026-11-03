@@ -110,20 +110,38 @@ function findChartCandles(blobs: unknown[], symbol: string, exchange: string): M
 
 const MAX_NEWS = 20;
 
-/** `["https://…", title, source, faviconUrl, publishedAtEpochSeconds, …]` */
-function findNews(blobs: unknown[]): NewsItem[] {
+const isNewsItem = (a: unknown): a is unknown[] =>
+  Array.isArray(a) &&
+  isStr(a[0]) &&
+  /^https?:\/\//.test(a[0]) &&
+  isStr(a[1]) &&
+  a[1].length > 0 &&
+  isStr(a[2]) &&
+  a[2].length > 0 &&
+  isNum(a[4]);
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const wholeWord = (word: string) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(word)}(?![\\p{L}\\p{N}])`, "iu");
+
+/**
+ * News items look like `["https://…", title, source, faviconUrl, publishedAtEpochSeconds, …]`.
+ * The page holds several news groups (company news, market-wide headlines…), so pick the group
+ * whose titles mention the company or ticker most often.
+ */
+function findNews(blobs: unknown[], symbol: string, companyShortName: string): NewsItem[] {
+  const patterns = [companyShortName, symbol].filter((w) => w.length > 0).map(wholeWord);
+  let best: { items: unknown[][]; score: number } | undefined;
+  for (const group of findAll(blobs, (a) => a.filter(isNewsItem).length >= 3)) {
+    const items = group.filter(isNewsItem);
+    const score = items.filter((it) => patterns.some((p) => p.test(it[1] as string))).length;
+    if (!best || score > best.score || (score === best.score && items.length > best.items.length)) {
+      best = { items, score };
+    }
+  }
+  if (!best || best.score === 0) return [];
+
   const byUrl = new Map<string, NewsItem>();
-  for (const a of findAll(
-    blobs,
-    (a) =>
-      isStr(a[0]) &&
-      /^https?:\/\//.test(a[0]) &&
-      isStr(a[1]) &&
-      a[1].length > 0 &&
-      isStr(a[2]) &&
-      a[2].length > 0 &&
-      isNum(a[4]),
-  )) {
+  for (const a of best.items) {
     const url = a[0] as string;
     if (!byUrl.has(url)) {
       byUrl.set(url, { url, title: a[1] as string, source: a[2] as string, publishedAt: a[4] as number });
@@ -132,7 +150,7 @@ function findNews(blobs: unknown[]): NewsItem[] {
   return [...byUrl.values()].sort((x, y) => y.publishedAt - x.publishedAt).slice(0, MAX_NEWS);
 }
 
-export function parseGoogleFinance(html: string, symbol: string, exchange: string): ParseResult {
+function parseUnsafe(html: string, symbol: string, exchange: string): ParseResult {
   const blobs = extractBlobs(html);
   if (blobs.length === 0) {
     return {
@@ -185,7 +203,17 @@ export function parseGoogleFinance(html: string, symbol: string, exchange: strin
     stats,
     intraday: candles.get(300) ?? [],
     daily: candles.get(86400) ?? [],
-    news: findNews(blobs),
+    news: findNews(blobs, symbol, isStr(profile?.[1]) ? (profile[1] as string) : (entry[2] as string).split(/\s+/)[0]),
   };
   return { ok: true, quote };
+}
+
+/** Never throws: any unexpected failure is reported as a layout problem. */
+export function parseGoogleFinance(html: string, symbol: string, exchange: string): ParseResult {
+  try {
+    return parseUnsafe(html, symbol, exchange);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return { ok: false, kind: "layout", reason: `Unexpected error while parsing the Google Finance page: ${message}` };
+  }
 }

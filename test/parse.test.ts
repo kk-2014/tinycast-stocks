@@ -90,7 +90,8 @@ describe("parseGoogleFinance: candles", () => {
 describe("parseGoogleFinance: news", () => {
   it("extracts de-duplicated news, newest first", () => {
     const news = parsed().news;
-    expect(news.length).toBeGreaterThanOrEqual(10);
+    expect(news.length).toBe(18);
+    for (const n of news) expect(n.title).not.toMatch(/Sensex|Nifty|\bNSE\b/);
     for (const n of news) {
       expect(n.url).toMatch(/^https?:\/\//);
       expect(n.title.length).toBeGreaterThan(5);
@@ -100,5 +101,32 @@ describe("parseGoogleFinance: news", () => {
     expect(new Set(news.map((n) => n.url)).size).toBe(news.length);
     const times = news.map((n) => n.publishedAt);
     expect(times).toEqual([...times].sort((a, b) => b - a));
+  });
+});
+
+const blob = (x: unknown) => `AF_initDataCallback({key: 'ds:0', hash: '1', data:${JSON.stringify(x)}, sideChannel: {}});`;
+const zedEntry = ["/m/x", ["ZZZ", "NASDAQ"], "Zed Corp", 0, "USD", [10, 1, 10, 2, 2, 2], null, 9];
+
+describe("parseGoogleFinance: scoping and robustness", () => {
+  it("returns no news when no group mentions the company", () => {
+    const group = [1, 2, 3].map((i) => [`https://x.test/${i}`, `Sensex rallies ${i}`, "Src", null, 1_800_000_000 + i]);
+    const page = blob(zedEntry) + blob(group);
+    const r = parseGoogleFinance(page, "ZZZ", "NASDAQ");
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.quote.news).toEqual([]);
+  });
+
+  it("never throws on garbled input", () => {
+    const inputs = [
+      "AF_initDataCallback({key: 'ds:0', hash: '1', data:[[[[",
+      `AF_initDataCallback({key: 'ds:0', hash: '1', data:[1,2`,
+      blob([null, null, [null]]),
+      blob(null),
+      "",
+    ];
+    for (const i of inputs) {
+      const r = parseGoogleFinance(i, "AAPL", "NASDAQ");
+      expect(r.ok).toBe(false);
+    }
   });
 });

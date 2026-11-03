@@ -1,4 +1,4 @@
-const START = /AF_initDataCallback\(\{key: 'ds:\d+', hash: '\d+', data:/g;
+const START = /AF_initDataCallback\(\{\s*key:\s*'[^']*',\s*hash:\s*'[^']*',\s*data:\s*/g;
 
 /** Slice the JSON array that starts at `start`, honouring strings and escapes. */
 function sliceJsonArray(s: string, start: number): string | null {
@@ -39,9 +39,16 @@ export function extractBlobs(html: string): unknown[] {
   return blobs;
 }
 
-/** Depth-first walk yielding every array nested in `value`, including `value` itself. */
+/** Iterative pre-order walk yielding every array nested in `value`, including `value` itself. */
 export function* walk(value: unknown): Generator<unknown[]> {
   if (!Array.isArray(value)) return;
-  yield value;
-  for (const child of value) yield* walk(child);
+  const stack: unknown[][] = [value];
+  while (stack.length > 0) {
+    const a = stack.pop() as unknown[];
+    yield a;
+    for (let i = a.length - 1; i >= 0; i--) {
+      const child = a[i];
+      if (Array.isArray(child)) stack.push(child);
+    }
+  }
 }

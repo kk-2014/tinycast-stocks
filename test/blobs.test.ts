@@ -20,7 +20,25 @@ describe("extractBlobs", () => {
   });
 });
 
+describe("extractBlobs: loosened header", () => {
+  it("decodes negative hashes and non-numeric keys", () => {
+    const page = `AF_initDataCallback({key: 'ds:abc', hash: '-1', data:[1,[2]], sideChannel: {}});`;
+    expect(extractBlobs(page)).toEqual([[1, [2]]]);
+  });
+});
+
 describe("walk", () => {
+  it("visits parents before children, left to right", () => {
+    const a = [[1], [[2]]];
+    expect([...walk(a)]).toEqual([a, a[0], a[1], (a[1] as unknown[])[0]]);
+  });
+
+  it("survives 20000 levels of nesting", () => {
+    let deep: unknown[] = [];
+    for (let i = 0; i < 19999; i++) deep = [deep];
+    expect([...walk(deep)].length).toBe(20000);
+  });
+
   it("yields every nested array", () => {
     const seen = [...walk([1, [2, [3]], "x"])];
     expect(seen.length).toBe(3);
