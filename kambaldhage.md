@@ -130,6 +130,7 @@ Notice the spec contains a *Risks* section that names both of the things that la
 - **More chart ranges.** Done, see section 10. (Originally the page only carried 1D and 1M, and we assumed a second data source was needed. We were wrong, which is the fun part.)
 - **Single-candle charts.** `buildChartSvg` returns `null` below 2 candles, so a pre-market session with one candle shows "No chart data available". A dot or a text note would be kinder.
 - **Non-US exchanges.** The probe list includes LON, TSE, NSE and others, but search is US-oriented and coverage is untested. Fixtures per region would settle it.
+- **Favorites prices, market status, insights.** Done, see section 11. Still pending: the pre/post-market price, waiting on a fixture captured outside regular hours.
 - **Real-time updates.** Right now you get a snapshot, refreshed by cache expiry or the Refresh action. Polling the highlighted row gently, with the same politeness rules, would make it feel alive.
 - **A scheduled live-check** so drift shows up in a weekly report instead of in a user's "Quote unavailable" panel.
 
@@ -194,3 +195,24 @@ Notice the spec contains a *Risks* section that names both of the things that la
 **The UI.** A "Chart Range" section with eight actions (⌘1 to ⌘8, a checkmark on the active one) plus ⌘T to cycle. `useChart` serves 1D and 1M from the quote with no network, and fetches the rest with the usual abort-on-change pattern and a 5-minute cache. Under the chart a caption shows the change over that range, using yesterday's close as the base for 1D and the first candle otherwise.
 
 **The risk, stated plainly.** This is Google's *undocumented internal API*. The RPC id, the codes, the token names, any of it can change without notice, and nobody will email us. What protects us: failures come back as visible, typed results (never a crash), the fixtures pin the current behaviour in tests, and `scripts/probe-ranges.mjs` plus `scripts/live-check.ts` can be re-run outside the sandbox to see what drifted. Treat the safety net as part of the feature, not an extra.
+
+
+---
+
+## 11. Favorites with prices, market status, and an Insights panel
+
+**Reading unlabeled arrays like a detective.** Google's data has no field names, just arrays of arrays. So how do you know that an index means anything? You cross-check it against something you can verify. We use the same trick everywhere: `price - prevClose == change` is a free sanity test for the quote entry. For the new fields we hunted for similar "invariants":
+
+- **Dividend yield.** Profile index 17 held `0.3254875` for Apple. Apple pays $1.08 a year and trades at $331.775; 1.08 / 331.775 = 0.003255, i.e. 0.3255 *percent*. The number matched to four digits, so it is a percent, not a fraction. For Reliance it reads `0.4588`, which is sensible for a stock around 1,308 rupees.
+- **Analyst counts, and the Sell/Hold riddle.** The consensus array is `[name, currency, low, high, avg, pct, count, rating, c1, c2, c3, …]`. Apple's are `15, 5, 9` and the page also lists 40 individual analyst ratings: 23 Buy, 12 Hold, 5 Sell. Hold is always bigger than Sell there, so the 9 must be Hold and the 5 must be Sell. That means the order is Buy, Sell, Hold, which is not the order you would guess. Then Reliance showed up with `4, 0, 0`. Zero and zero cannot tell you which is which. We say so in a code comment instead of pretending to know.
+- **The `326.21` red herring.** We spotted a price near the day's open sitting in the entry (index 16) and wondered if it was the after-hours price. It was the price a few minutes into the session. Looking at when a number is *stamped* matters as much as its value.
+
+**Market status from a window and a timezone.** The page holds the session as `[Y, M, D, h, min, null, null, [offsetSeconds]]`, twice (open and close), in the exchange's local time. Convert with `Date.UTC(Y, M-1, D, h, min ?? 0) / 1000 - offsetSeconds`. Two traps: months are 1-based in the data but 0-based in `Date.UTC`, and **minutes can be `null`**, which means 0 (Apple's close is `16, null`). Forgetting that gives `NaN` and a blank status. The status itself is a pure function of `(hours, now)`: open at `open <= now < close` (so the open instant counts, the close instant does not), "opens in X" before, "closed" after. Pure, so every boundary has a test and `now` is a parameter instead of a hidden clock.
+
+**Peers by shape.** Same philosophy as the candles and the news: don't trust positions, trust silhouettes. A peer group is any array with at least two children shaped like quote entries and none being the stock itself. It picked exactly NVDA, AMZN, MSFT, TSLA for Apple, and INFY, HDFCBANK, HINDUNILVR, KOTAKBANK for Reliance (note INFY is on NYSE, which is why exchange travels with the peer).
+
+**Favorites with live prices, politely.** Ten favorites could mean ten simultaneous requests to Google, which is how you get rate-limited or blocked. `mapWithConcurrency(items, 3, fn)` is a tiny worker pool: three workers pull the next index until the list is empty, results stay in order, and at most three requests are in flight. The hook updates state as each quote lands, so rows fill in one by one instead of waiting for the slowest. It shares the detail view's cache (`quote:v2:EXCHANGE:SYMBOL`, 60 s), so clicking a favorite you just loaded costs nothing, and the other way round. Refresh bypasses the cache exactly once per click via the same `handledRef` pattern.
+
+**Controlled search box.** The peer actions ("Go to NVDA") need to type into the search bar for you. That requires `searchText={query}` on the `<List>`, making the box controlled. The debounced search effect depends only on `query`, so setting it programmatically triggers the same search as typing.
+
+**Honest limits.** The Sell/Hold order is inferred, not proven. The after-hours price is not implemented because we have no fixture captured outside regular hours, and guessing an index without evidence is how wrong prices end up on screen. Everything here is also an undocumented layout that can shift; the shape predicates fail soft (a missing section, never a crash).
