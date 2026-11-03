@@ -52,7 +52,7 @@ The result is a `ParseResult`: either `{ok: true, quote}` or `{ok: false, kind, 
 
 **Chart (`src/chart.ts`, `src/chartImage.ts`).** `buildChartSvg` turns candles into an SVG: a closing-price line, a faint filled area, green or red depending on direction, and for the 1-day chart a dashed line at the previous close. `chartImage.ts` embeds it in the detail pane's markdown as a base64 **data URI** (`CHART_MODE = "data-uri"`). The other modes (temp file URL, file path, text sparkline) are still in the code as fallbacks.
 
-**UI (`src/index.tsx`).** A `List` with a detail pane: header with price and change, chart, a news list, and a metadata sidebar (open, high, low, market cap, 52-week range, P/E, and so on). Actions: open in Google Finance, toggle 1D / 1M chart, favorite, refresh, copy price. Failures render as a visible "Quote unavailable" panel with the reason.
+**UI (`src/index.tsx`).** A `List` with a detail pane: header with price and change, chart, a news list, and a metadata sidebar (open, high, low, market cap, 52-week range, P/E, and so on). Actions: open in Google Finance, pick a chart range (1D to Max, ⌘1 to ⌘8), favorite, refresh, copy price. Failures render as a visible "Quote unavailable" panel with the reason.
 
 **Formatting (`src/format.ts`).** Small pure helpers: `compact` (1.23T), `money`, `signed`, `timeAgo`.
 
@@ -127,7 +127,7 @@ Notice the spec contains a *Risks* section that names both of the things that la
 
 ## 8. What I'd do next
 
-- **More chart ranges.** Google's HTML only contains 5-minute intraday and about a month of daily candles. 5-day, 6-month, YTD, 1-year or max need a **second data source**. Faking them from data we don't have would be a lie.
+- **More chart ranges.** Done, see section 10. (Originally the page only carried 1D and 1M, and we assumed a second data source was needed. We were wrong, which is the fun part.)
 - **Single-candle charts.** `buildChartSvg` returns `null` below 2 candles, so a pre-market session with one candle shows "No chart data available". A dot or a text note would be kinder.
 - **Non-US exchanges.** The probe list includes LON, TSE, NSE and others, but search is US-oriented and coverage is untested. Fixtures per region would settle it.
 - **Real-time updates.** Right now you get a snapshot, refreshed by cache expiry or the Refresh action. Polling the highlighted row gently, with the same politeness rules, would make it feel alive.
@@ -145,6 +145,7 @@ Notice the spec contains a *Risks* section that names both of the things that la
 | `src/google.ts` | URL building, exchange probing, hints, blocked detection |
 | `src/parse.ts` | Pure HTML to `ParseResult`, finds data by shape, never throws |
 | `src/blobs.ts` | Extracts `AF_initDataCallback` JSON, iterative `walk` |
+| `src/ranges.ts`, `src/useChart.ts` | Range list and RPC fetcher; the hook that serves 1D/1M from the page and the rest from Google's RPC |
 | `src/types.ts` | `Quote`, `Candle`, `ParseResult` and the failure kinds |
 | `src/chart.ts` and `src/chartImage.ts` | Candles to SVG, then to data-URI markdown |
 | `src/cache.ts`, `src/kv.ts` | TTL cache and the Raycast storage adapter |
@@ -172,3 +173,24 @@ Notice the spec contains a *Risks* section that names both of the things that la
 **Lakh and crore.** India groups digits as 13,07,900 (the first group is three digits, the rest are pairs), and big numbers are lakh (10^5) and crore (10^7). A *lakh crore* is 10^12, which is why Reliance's market cap reads `17.67L Cr` rather than "17.67T". We get the grouping free from `Intl.NumberFormat("en-IN")` and wrote a small `compactIndian` for the abbreviations. Tests pin both, so `₹1,307.90` and `₹13,07,900.00` can't quietly regress.
 
 **Keys must include the exchange.** A symbol alone is not an identity: the same ticker can exist on two exchanges. So favourites, React row ids and the quote cache are all keyed by `exchange:symbol` (`favKey`, `quote:v2:NSE:RELIANCE`). The old `quote:v1:` cache keys were abandoned on purpose by bumping the version, and old favourites without an exchange still load, meaning "US, probe for it". Rule of thumb: if two different things can share a name, put the namespace in the key before the collision bug exists.
+
+
+---
+
+## 10. Chart ranges: eight buttons, one undocumented door
+
+**The problem.** The quote page only carries two datasets: 5-minute candles for today and about a month of daily candles. So 1D and 1M were free, and 5D, 6M, YTD, 1Y, 5Y and Max looked like they needed a second source. We tried Yahoo's chart endpoint first. It answered **429**. Building on a rate-limited, unofficial endpoint is like building a house on a sandbar that appears at low tide.
+
+**The break.** Then we looked at what Google's own page says about itself. Inside the same `AF_initDataCallback` soup there is a list called `AF_dataServiceRequests`: a table of contents of every dataset the page loads, with the RPC id and the request payload for each. The chart one is `c2u4wc`, and its request is just `[[[null,[SYMBOL,EXCHANGE]]], RANGE_CODE, null, null, null, null, null, 1]`. The page was never hiding anything; it was handing us the order form. Lesson: before you reach for a second vendor, read the first vendor's own manual, even when the manual is a minified JS blob.
+
+**Decoding the range codes (and the trap in it).** We fetched every code and compared sizes, expecting them to grow with the range. They did not. Code 2 returned 68 candles, code 4 only 27, code 5 returned 211, and code 8 returned 2,087. Wrong mental model: the candles are not the same size. 5D uses 30-minute candles, 6M and 1Y and 5Y and Max use *weekly* candles, YTD uses *daily* ones. A 6-month weekly chart has fewer points than a 5-day half-hourly one. The mapping is 2=5D, 4=6M, 5=YTD, 6=1Y, 7=5Y, 8=Max (3 is the 1M we already have). Lesson: decode before you assume. We saved each response as a fixture, so the facts are pinned by tests instead of by memory.
+
+**The transport: `batchexecute`.** The answer is a POST with a form body `f.req=<JSON>`, and it needs three tokens that live in the quote page: `FdrFJe` (session id), `cfb2h` (build label) and `Im6cmf` (URL base). No auth token is required. We now extract those in `extractSession` and hang them on the `Quote`. The response is a peculiar sandwich: a `)]}'` prefix (an old anti-JSON-hijacking trick), then length-prefixed chunks, each a line holding a JSON array like `["wrb.fr","c2u4wc","<a JSON string>", …]`. Yes: **JSON inside a string inside JSON**. You parse twice, like opening a matryoshka doll. We skip the length numbers entirely and just try to parse every line that starts with `[`; garbage lines are ignored.
+
+**Reuse beats rewrite.** Remember the shape-based candle finder, the one that doesn't care about array positions? The decoded payload has the same silhouette as the page's chart blobs, so `parseBatchExecute` just hands it to `findChartCandles` and takes the longest list. A brand new transport, and the parser did not need to learn anything. That is the dividend of searching by shape: it pays out again years later, in places you didn't plan.
+
+**2,087 points is too many.** Max range gives forty years of weekly candles. Drawing 2,087 path points in an SVG that gets base64-encoded into a markdown image is wasteful, and your eye cannot see more than a few hundred anyway. `downsample` picks 400 evenly spaced candles, always keeping the first and the last (otherwise the chart's endpoints, and the percentage change, would lie). Axis labels also adapt to the span: "Mon D" for short ranges, "Nov '25" past six months, a bare year past two years, because "Nov 5" on a 40-year chart tells you nothing.
+
+**The UI.** A "Chart Range" section with eight actions (⌘1 to ⌘8, a checkmark on the active one) plus ⌘T to cycle. `useChart` serves 1D and 1M from the quote with no network, and fetches the rest with the usual abort-on-change pattern and a 5-minute cache. Under the chart a caption shows the change over that range, using yesterday's close as the base for 1D and the first candle otherwise.
+
+**The risk, stated plainly.** This is Google's *undocumented internal API*. The RPC id, the codes, the token names, any of it can change without notice, and nobody will email us. What protects us: failures come back as visible, typed results (never a crash), the fixtures pin the current behaviour in tests, and `scripts/probe-ranges.mjs` plus `scripts/live-check.ts` can be re-run outside the sandbox to see what drifted. Treat the safety net as part of the feature, not an extra.
