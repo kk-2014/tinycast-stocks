@@ -65,3 +65,24 @@ describe("parseGoogleFinance: stats", () => {
     expect(parsed().description).toMatch(/^Apple Inc\./);
   });
 });
+
+describe("parseGoogleFinance: candles", () => {
+  it("extracts 5-minute intraday candles", () => {
+    const q = parsed();
+    expect(q.intraday.length).toBe(52);
+    expect(q.intraday[0]).toEqual({
+      open: 325.58,
+      close: 326.04,
+      high: 326.23,
+      low: 325.33,
+      time: "2026-11-03T09:30:00-05:00",
+      volume: 8519,
+    });
+  });
+
+  it("extracts daily candles ending at the previous close", () => {
+    const q = parsed();
+    expect(q.daily.length).toBe(21);
+    expect(q.daily[q.daily.length - 1].close).toBeCloseTo(q.previousClose, 2);
+  });
+});

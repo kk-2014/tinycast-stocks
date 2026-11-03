@@ -1,5 +1,5 @@
 import { extractBlobs, walk } from "./blobs";
-import type { ParseResult, Quote, Stats } from "./types";
+import type { Candle, ParseResult, Quote, Stats } from "./types";
 
 export const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const isStr = (x: unknown): x is string => typeof x === "string";
@@ -63,6 +63,51 @@ function findProfile(blobs: unknown[], mid: unknown): unknown[] | undefined {
   )[0];
 }
 
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T/;
+
+function toCandle(x: unknown): Candle | undefined {
+  if (!Array.isArray(x) || x.length < 6) return undefined;
+  const [open, close, high, low, time, volume] = x;
+  if (!isNum(open) || !isNum(close) || !isNum(high) || !isNum(low) || !isNum(volume)) return undefined;
+  if (!isStr(time) || !ISO_TIME.test(time)) return undefined;
+  return { open, close, high, low, time, volume };
+}
+
+/** First array inside `root` whose elements are all candles (at least 2). */
+function findCandles(root: unknown): Candle[] {
+  for (const a of walk(root)) {
+    if (a.length < 2) continue;
+    const candles = a.map(toCandle);
+    if (candles.every((c): c is Candle => c !== undefined)) return candles;
+  }
+  return [];
+}
+
+/**
+ * Chart entries look like `[[SYM,EXCH], mid, currency, [series…], …, intervalSeconds, 0]`.
+ * Returns the longest candle list per interval (300 = 5-minute, 86400 = daily).
+ */
+function findChartCandles(blobs: unknown[], symbol: string, exchange: string): Map<number, Candle[]> {
+  const byInterval = new Map<number, Candle[]>();
+  const entries = findAll(
+    blobs,
+    (a) =>
+      Array.isArray(a[0]) &&
+      a[0][0] === symbol &&
+      a[0][1] === exchange &&
+      isStr(a[1]) &&
+      isStr(a[2]) &&
+      Array.isArray(a[3]) &&
+      isNum(a[a.length - 2]),
+  );
+  for (const e of entries) {
+    const interval = e[e.length - 2] as number;
+    const candles = findCandles(e[3]);
+    if (candles.length > (byInterval.get(interval)?.length ?? 0)) byInterval.set(interval, candles);
+  }
+  return byInterval;
+}
+
 export function parseGoogleFinance(html: string, symbol: string, exchange: string): ParseResult {
   const blobs = extractBlobs(html);
   if (blobs.length === 0) {
@@ -100,6 +145,8 @@ export function parseGoogleFinance(html: string, symbol: string, exchange: strin
   };
   const description = isStr(profile?.[2]) ? (profile[2] as string) : undefined;
 
+  const candles = findChartCandles(blobs, symbol, exchange);
+
   const quote: Quote = {
     symbol,
     exchange,
@@ -112,8 +159,8 @@ export function parseGoogleFinance(html: string, symbol: string, exchange: strin
     updatedAt: updated,
     description,
     stats,
-    intraday: [],
-    daily: [],
+    intraday: candles.get(300) ?? [],
+    daily: candles.get(86400) ?? [],
     news: [],
   };
   return { ok: true, quote };
