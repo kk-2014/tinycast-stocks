@@ -15,11 +15,23 @@ const RIGHT_GUTTER = 46;
 const BOTTOM_GUTTER = 22;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+const DAY_MS = 86_400_000;
+const SIX_MONTHS_DAYS = 190;
+const TWO_YEARS_DAYS = 740;
+
+const dayNumber = (iso: string): number | undefined => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / DAY_MS : undefined;
+};
+
 /**
  * Axis label from an exchange-local ISO string. Parsed textually so no timezone
  * conversion happens: intraday -> "h:mm AM/PM", otherwise "Mon D".
+ *
+ * The optional `span` (first and last candle times of the whole series) adapts date labels to long
+ * ranges: more than ~6 months -> "Mon 'YY", more than ~2 years -> "YYYY". Intraday labels ignore it.
  */
-export function formatAxisTime(iso: string, intraday: boolean): string {
+export function formatAxisTime(iso: string, intraday: boolean, span?: { first: string; last: string }): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(iso);
   if (!m) return "";
   if (intraday) {
@@ -27,11 +39,33 @@ export function formatAxisTime(iso: string, intraday: boolean): string {
     const suffix = h >= 12 ? "PM" : "AM";
     return `${h % 12 === 0 ? 12 : h % 12}:${m[5] ?? "00"} ${suffix}`;
   }
+  const a = span ? dayNumber(span.first) : undefined;
+  const b = span ? dayNumber(span.last) : undefined;
+  const days = a !== undefined && b !== undefined ? b - a : 0;
+  if (days > TWO_YEARS_DAYS) return m[1];
+  if (days > SIX_MONTHS_DAYS) return `${MONTHS[Number(m[2]) - 1]} '${m[1].slice(2)}`;
   return `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`;
 }
 
-export function buildChartSvg(candles: Candle[], options: ChartOptions = {}): string | null {
-  if (candles.length < 2) return null;
+/** Evenly spaced subset (always keeping the first and last candle) so long histories stay small. */
+export function downsample(candles: Candle[], max = 400): Candle[] {
+  if (candles.length <= max) return candles;
+  const last = candles.length - 1;
+  return Array.from({ length: max }, (_, k) => candles[Math.round((k * last) / (max - 1))]);
+}
+
+/** Change of the last close versus `reference` (default: the first close). */
+export function rangeChange(candles: Candle[], reference?: number): { abs: number; pct: number } | undefined {
+  if (candles.length < 1) return undefined;
+  const ref = reference ?? candles[0].close;
+  if (ref === 0) return undefined;
+  const abs = candles[candles.length - 1].close - ref;
+  return { abs, pct: (abs / ref) * 100 };
+}
+
+export function buildChartSvg(allCandles: Candle[], options: ChartOptions = {}): string | null {
+  if (allCandles.length < 2) return null;
+  const candles = downsample(allCandles);
   const width = options.width ?? 640;
   const height = options.height ?? 260;
   const pad = 8;
@@ -69,11 +103,12 @@ export function buildChartSvg(candles: Candle[], options: ChartOptions = {}): st
     .join("");
 
   const intraday = candles.every((c) => c.time.slice(0, 10) === candles[0].time.slice(0, 10));
+  const timeSpan = { first: candles[0].time, last: candles[candles.length - 1].time };
   const labelCount = Math.min(4, candles.length);
   const xAxis = Array.from({ length: labelCount }, (_, k) => {
     const i = Math.round((k * (candles.length - 1)) / (labelCount - 1));
     const anchor = k === 0 ? "start" : k === labelCount - 1 ? "end" : "middle";
-    return `<text class="xlabel" x="${x(i).toFixed(1)}" y="${height - 6}" text-anchor="${anchor}" fill="${AXIS}" ${FONT}>${formatAxisTime(candles[i].time, intraday)}</text>`;
+    return `<text class="xlabel" x="${x(i).toFixed(1)}" y="${height - 6}" text-anchor="${anchor}" fill="${AXIS}" ${FONT}>${formatAxisTime(candles[i].time, intraday, timeSpan)}</text>`;
   }).join("");
 
   return (

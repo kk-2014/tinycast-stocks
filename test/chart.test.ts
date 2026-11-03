@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildChartSvg, formatAxisTime, sparkline, svgToDataUri } from "../src/chart";
+import { buildChartSvg, downsample, formatAxisTime, rangeChange, sparkline, svgToDataUri } from "../src/chart";
 import type { Candle } from "../src/types";
 
 const candle = (close: number, i: number): Candle => ({
@@ -117,5 +117,86 @@ describe("sparkline", () => {
   });
   it("is empty for no candles", () => {
     expect(sparkline([])).toBe("");
+  });
+});
+
+describe("formatAxisTime with a span", () => {
+  it("keeps the old behaviour without a span", () => {
+    expect(formatAxisTime("2026-11-03T09:30:00-05:00", true)).toBe("9:30 AM");
+    expect(formatAxisTime("2025-11-03", false)).toBe("Nov 3");
+  });
+
+  it("uses 'Mon D' up to ~6 months", () => {
+    expect(formatAxisTime("2026-05-01", false, { first: "2026-05-01", last: "2026-10-30" })).toBe("May 1");
+  });
+
+  it("uses \"Mon 'YY\" between ~6 months and ~2 years", () => {
+    expect(formatAxisTime("2025-11-07", false, { first: "2025-11-07", last: "2026-10-30" })).toBe("Nov '25");
+    expect(formatAxisTime("2024-12-01", false, { first: "2024-12-01", last: "2026-10-30" })).toBe("Dec '24");
+  });
+
+  it("uses the year beyond ~2 years", () => {
+    expect(formatAxisTime("2021-11-05", false, { first: "2021-11-05", last: "2026-10-30" })).toBe("2021");
+    expect(formatAxisTime("1986-11-07", false, { first: "1986-11-07", last: "2026-10-30" })).toBe("1986");
+  });
+
+  it("is used by buildChartSvg for long series", () => {
+    const long = [at(1, "2021-11-05"), at(2, "2023-01-02"), at(3, "2024-06-03"), at(4, "2026-10-30")];
+    const svg = buildChartSvg(long)!;
+    expect(svg).toContain(">2021<");
+    expect(svg).toContain(">2026<");
+    const mid = [at(1, "2025-11-07"), at(2, "2026-03-02"), at(3, "2026-10-30")];
+    expect(buildChartSvg(mid)!).toContain(">Nov '25<");
+  });
+});
+
+describe("downsample", () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => at(i, `2026-01-01`));
+
+  it("returns short series unchanged", () => {
+    const c = many(400);
+    expect(downsample(c)).toBe(c);
+    expect(downsample(many(3))).toHaveLength(3);
+  });
+
+  it("reduces 2087 points to exactly 400, keeping first, last and order", () => {
+    const c = many(2087);
+    const d = downsample(c);
+    expect(d).toHaveLength(400);
+    expect(d[0]).toBe(c[0]);
+    expect(d[399]).toBe(c[2086]);
+    const closes = d.map((x) => x.close);
+    expect(closes).toEqual([...closes].sort((a, b) => a - b));
+    expect(new Set(closes).size).toBe(400);
+  });
+
+  it("honours a custom max", () => {
+    expect(downsample(many(100), 10)).toHaveLength(10);
+  });
+
+  it("is applied inside buildChartSvg", () => {
+    const c = Array.from({ length: 2087 }, (_, i) => at(100 + (i % 17), `${1986 + Math.floor(i / 52)}-06-01`));
+    const svg = buildChartSvg(c)!;
+    const line = svg.match(/<path class="line" d="([^"]+)"/)![1];
+    expect(line.split(" L").length).toBeLessThanOrEqual(400);
+  });
+});
+
+describe("rangeChange", () => {
+  it("compares the last close with the first close by default", () => {
+    const r = rangeChange([at(100, "2026-01-01"), at(150, "2026-01-02"), at(110, "2026-01-03")])!;
+    expect(r.abs).toBeCloseTo(10);
+    expect(r.pct).toBeCloseTo(10);
+  });
+
+  it("uses an explicit reference", () => {
+    const r = rangeChange([at(90, "2026-01-01")], 100)!;
+    expect(r.abs).toBeCloseTo(-10);
+    expect(r.pct).toBeCloseTo(-10);
+  });
+
+  it("is undefined without candles or with a zero reference", () => {
+    expect(rangeChange([])).toBeUndefined();
+    expect(rangeChange([at(5, "2026-01-01")], 0)).toBeUndefined();
   });
 });
