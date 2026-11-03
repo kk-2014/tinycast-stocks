@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { KV } from "../src/cache";
-import { fetchQuote, quoteUrl } from "../src/google";
+import { EXCHANGES, fetchQuote, googleFinanceSearchUrl, quoteUrl } from "../src/google";
 import type { FetchResponse, Fetcher } from "../src/http";
 
 const html = readFileSync(join(__dirname, "fixtures/AAPL-NASDAQ-2026-11-03.html"), "utf8");
@@ -78,5 +78,70 @@ describe("fetchQuote", () => {
   it("returns not-found when no exchange has the symbol", async () => {
     const fetcher: Fetcher = async () => page("", 404);
     expect(await fetchQuote("ZZZZZ", { fetcher })).toMatchObject({ ok: false, kind: "not-found" });
+  });
+
+  it("parses fine when the response has no url", async () => {
+    const fetcher: Fetcher = async () => ({ ok: true, status: 200, text: async () => html });
+    expect((await fetchQuote("AAPL", { fetcher })).ok).toBe(true);
+  });
+
+  it("still returns the quote when the hint write fails", async () => {
+    const hints: KV = { get: async () => undefined, set: async () => { throw new Error("disk full"); } };
+    const fetcher: Fetcher = async () => page(html);
+    expect((await fetchQuote("AAPL", { fetcher, hints })).ok).toBe(true);
+  });
+
+  it("only probes US venues", () => {
+    expect(EXCHANGES).toEqual(["NASDAQ", "NYSE", "NYSEARCA", "NYSEAMERICAN", "BATS", "MUTF"]);
+  });
+
+  it("reports a network failure when every probe returns 503", async () => {
+    const fetcher: Fetcher = async () => page("", 503);
+    const r = await fetchQuote("AAPL", { fetcher });
+    expect(r).toMatchObject({ ok: false, kind: "network" });
+    expect(!r.ok && r.reason).toContain("HTTP 503");
+  });
+
+  it("reports not-found when every probe returns 404", async () => {
+    const fetcher: Fetcher = async () => page("", 404);
+    expect(await fetchQuote("AAPL", { fetcher })).toMatchObject({ ok: false, kind: "not-found" });
+  });
+
+  it("reports not-found when a 404 was seen even if later probes return 503", async () => {
+    let n = 0;
+    const fetcher: Fetcher = async () => page("", n++ === 0 ? 404 : 503);
+    expect(await fetchQuote("AAPL", { fetcher })).toMatchObject({ ok: false, kind: "not-found" });
+  });
+
+  it("stops immediately on HTTP 403 with a blocked failure", async () => {
+    let n = 0;
+    const fetcher: Fetcher = async () => (n++, page("", 403));
+    expect(await fetchQuote("AAPL", { fetcher })).toMatchObject({ ok: false, kind: "blocked" });
+    expect(n).toBe(1);
+  });
+
+  it("requests the hinted exchange first and never twice", async () => {
+    const hints = memoryKV();
+    await hints.set("exchange:AAPL", "NYSE");
+    const calls: string[] = [];
+    const fetcher: Fetcher = async (url) => (calls.push(url), page("", 404));
+    await fetchQuote("AAPL", { fetcher, hints });
+    expect(calls[0]).toBe(quoteUrl("AAPL", "NYSE"));
+    expect([...calls].sort()).toEqual(EXCHANGES.map((e) => quoteUrl("AAPL", e)).sort());
+    expect(new Set(calls).size).toBe(calls.length);
+  });
+
+  it("rejects when the fetcher throws an AbortError", async () => {
+    const fetcher: Fetcher = async () => {
+      throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    };
+    await expect(fetchQuote("AAPL", { fetcher })).rejects.toThrow();
+  });
+});
+
+describe("googleFinanceSearchUrl", () => {
+  it("builds an encoded search URL", () => {
+    expect(googleFinanceSearchUrl("BRK.B")).toBe("https://www.google.com/finance/?q=BRK.B");
+    expect(googleFinanceSearchUrl("A B&C")).toBe("https://www.google.com/finance/?q=A%20B%26C");
   });
 });

@@ -43,4 +43,29 @@ describe("searchStocks", () => {
     const fetcher: Fetcher = async () => json({ nope: true });
     expect(await searchStocks("apple", { fetcher })).toEqual([]);
   });
+
+  it("throws a readable error when the body is not JSON", async () => {
+    const fetcher: Fetcher = async () => ({ ok: true, status: 200, text: async () => "<html>oops</html>" });
+    await expect(searchStocks("apple", { fetcher })).rejects.toThrow("Search returned an unexpected response");
+  });
+
+  it("de-duplicates hits by symbol, keeping the first", async () => {
+    const data = [
+      { s: "AAPL", n: "Apple Inc.", t: "s" },
+      { s: "MSFT", n: "Microsoft", t: "s" },
+      { s: "AAPL", n: "Apple Duplicate", t: "s" },
+    ];
+    const fetcher: Fetcher = async () => json({ data });
+    expect(await searchStocks("a", { fetcher })).toEqual([
+      { symbol: "AAPL", name: "Apple Inc.", type: "Stock" },
+      { symbol: "MSFT", name: "Microsoft", type: "Stock" },
+    ]);
+  });
+
+  it("rejects when the fetcher throws an AbortError", async () => {
+    const fetcher: Fetcher = async () => {
+      throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    };
+    await expect(searchStocks("apple", { fetcher })).rejects.toThrow();
+  });
 });

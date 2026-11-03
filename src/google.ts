@@ -10,18 +10,13 @@ export const EXCHANGES = [
   "NYSEAMERICAN",
   "BATS",
   "MUTF",
-  "TSE",
-  "LON",
-  "ASX",
-  "HKG",
-  "NSE",
-  "BOM",
-  "ETR",
-  "TYO",
 ];
 
 export const quoteUrl = (symbol: string, exchange: string) =>
   `https://www.google.com/finance/quote/${encodeURIComponent(symbol)}:${exchange}`;
+
+export const googleFinanceSearchUrl = (symbol: string) =>
+  `https://www.google.com/finance/?q=${encodeURIComponent(symbol)}`;
 
 export interface FetchQuoteOptions {
   fetcher?: Fetcher;
@@ -42,12 +37,14 @@ export async function fetchQuote(symbol: string, options: FetchQuoteOptions = {}
   const order = [...(hint ? [hint] : []), ...EXCHANGES.filter((e) => e !== hint)];
 
   let last: ParseResult = { ok: false, kind: "not-found", reason: `No Google Finance listing found for ${sym}.` };
+  let sawNotFound = false;
+  let badStatus: number | undefined;
   for (const exchange of order) {
     const res = await fetcher(quoteUrl(sym, exchange), {
       headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" },
       signal: options.signal,
     });
-    if (res.url.includes("consent.google.com")) {
+    if (res.url?.includes("consent.google.com")) {
       return { ok: false, kind: "blocked", reason: "Google asked for cookie consent; scripted access is blocked." };
     }
     if (res.status === 403 || res.status === 429) {
@@ -57,17 +54,32 @@ export async function fetchQuote(symbol: string, options: FetchQuoteOptions = {}
         reason: `Google Finance blocked the request (HTTP ${res.status}). Try again in a few minutes.`,
       };
     }
-    if (!res.ok) continue;
+    if (res.status === 404) {
+      sawNotFound = true;
+      continue;
+    }
+    if (!res.ok) {
+      badStatus = res.status;
+      continue;
+    }
 
     // The parser cannot tell whether a page belongs to the requested symbol (peer quote entries appear on
     // every page), so the URL's symbol/exchange is the source of truth.
     const parsed = parseGoogleFinance(await res.text(), sym, exchange);
     if (parsed.ok) {
-      await options.hints?.set(`exchange:${sym}`, exchange);
+      try {
+        await options.hints?.set(`exchange:${sym}`, exchange);
+      } catch {
+        // A failed hint write must never turn a good quote into an error.
+      }
       return parsed;
     }
     if (parsed.kind === "layout") return parsed;
+    if (parsed.kind === "not-found") sawNotFound = true;
     last = parsed;
+  }
+  if (!sawNotFound && badStatus !== undefined) {
+    return { ok: false, kind: "network", reason: `Google Finance returned HTTP ${badStatus}. Try again later.` };
   }
   return last;
 }

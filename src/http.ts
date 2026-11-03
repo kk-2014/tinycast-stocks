@@ -4,7 +4,7 @@ export const UA =
 export interface FetchResponse {
   ok: boolean;
   status: number;
-  url: string;
+  url?: string;
   text(): Promise<string>;
 }
 

@@ -25,4 +25,17 @@ describe("cache", () => {
     await kv.set("bad", "{not json");
     expect(await getFresh(kv, "bad", 1000, 0)).toBeUndefined();
   });
+
+  it("returns undefined for an entry of the wrong shape", async () => {
+    const kv = memoryKV();
+    await kv.set("k", '{"foo":1}');
+    expect(await getFresh(kv, "k", 1000, 0)).toBeUndefined();
+    await kv.set("n", "null");
+    expect(await getFresh(kv, "n", 1000, 0)).toBeUndefined();
+  });
+
+  it("does not throw when the underlying set fails", async () => {
+    const kv: KV = { get: async () => undefined, set: async () => { throw new Error("full"); } };
+    await expect(putFresh(kv, "k", { a: 1 })).resolves.toBeUndefined();
+  });
 });

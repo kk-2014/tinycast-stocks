@@ -12,7 +12,8 @@ export async function getFresh<T>(kv: KV, key: string, ttlMs: number, now: numbe
   const raw = await kv.get(key);
   if (!raw) return undefined;
   try {
-    const entry = JSON.parse(raw) as Entry<T>;
+    const entry = JSON.parse(raw) as Partial<Entry<T>> | null;
+    if (typeof entry !== "object" || entry === null || typeof entry.at !== "number") return undefined;
     return now - entry.at <= ttlMs ? entry.value : undefined;
   } catch {
     return undefined;
@@ -20,5 +21,9 @@ export async function getFresh<T>(kv: KV, key: string, ttlMs: number, now: numbe
 }
 
 export async function putFresh<T>(kv: KV, key: string, value: T, now: number = Date.now()): Promise<void> {
-  await kv.set(key, JSON.stringify({ at: now, value } satisfies Entry<T>));
+  try {
+    await kv.set(key, JSON.stringify({ at: now, value } satisfies Entry<T>));
+  } catch {
+    // Caching is best-effort.
+  }
 }
