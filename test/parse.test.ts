@@ -86,3 +86,19 @@ describe("parseGoogleFinance: candles", () => {
     expect(q.daily[q.daily.length - 1].close).toBeCloseTo(q.previousClose, 2);
   });
 });
+
+describe("parseGoogleFinance: news", () => {
+  it("extracts de-duplicated news, newest first", () => {
+    const news = parsed().news;
+    expect(news.length).toBeGreaterThanOrEqual(10);
+    for (const n of news) {
+      expect(n.url).toMatch(/^https?:\/\//);
+      expect(n.title.length).toBeGreaterThan(5);
+      expect(n.source.length).toBeGreaterThan(0);
+      expect(n.publishedAt).toBeGreaterThan(1_700_000_000);
+    }
+    expect(new Set(news.map((n) => n.url)).size).toBe(news.length);
+    const times = news.map((n) => n.publishedAt);
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+  });
+});

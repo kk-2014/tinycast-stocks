@@ -1,5 +1,5 @@
 import { extractBlobs, walk } from "./blobs";
-import type { Candle, ParseResult, Quote, Stats } from "./types";
+import type { Candle, NewsItem, ParseResult, Quote, Stats } from "./types";
 
 export const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const isStr = (x: unknown): x is string => typeof x === "string";
@@ -108,6 +108,30 @@ function findChartCandles(blobs: unknown[], symbol: string, exchange: string): M
   return byInterval;
 }
 
+const MAX_NEWS = 20;
+
+/** `["https://…", title, source, faviconUrl, publishedAtEpochSeconds, …]` */
+function findNews(blobs: unknown[]): NewsItem[] {
+  const byUrl = new Map<string, NewsItem>();
+  for (const a of findAll(
+    blobs,
+    (a) =>
+      isStr(a[0]) &&
+      /^https?:\/\//.test(a[0]) &&
+      isStr(a[1]) &&
+      a[1].length > 0 &&
+      isStr(a[2]) &&
+      a[2].length > 0 &&
+      isNum(a[4]),
+  )) {
+    const url = a[0] as string;
+    if (!byUrl.has(url)) {
+      byUrl.set(url, { url, title: a[1] as string, source: a[2] as string, publishedAt: a[4] as number });
+    }
+  }
+  return [...byUrl.values()].sort((x, y) => y.publishedAt - x.publishedAt).slice(0, MAX_NEWS);
+}
+
 export function parseGoogleFinance(html: string, symbol: string, exchange: string): ParseResult {
   const blobs = extractBlobs(html);
   if (blobs.length === 0) {
@@ -161,7 +185,7 @@ export function parseGoogleFinance(html: string, symbol: string, exchange: strin
     stats,
     intraday: candles.get(300) ?? [],
     daily: candles.get(86400) ?? [],
-    news: [],
+    news: findNews(blobs),
   };
   return { ok: true, quote };
 }
