@@ -8,6 +8,7 @@ import { FAVORITES_KEY, favKey, parseFavs, toggleFav, type Fav } from "./favorit
 import { insightsMarkdown } from "./insights";
 import { marketStatus } from "./market";
 import { googleFinanceSearchUrl, quoteUrl } from "./google";
+import { searchIndices } from "./indices";
 import { searchStocks, type SearchHit } from "./search";
 import { RANGES, type RangeId } from "./ranges";
 import type { Quote } from "./types";
@@ -150,7 +151,7 @@ export default function Command() {
   }, [query]);
 
   const rows: Fav[] = query.trim()
-    ? hits.map((h) => ({ symbol: h.symbol, name: h.name, ...(h.exchange ? { exchange: h.exchange } : {}) }))
+    ? [...searchIndices(query), ...hits].map((h) => ({ symbol: h.symbol, name: h.name, ...(h.exchange ? { exchange: h.exchange } : {}) }))
     : favs;
   const showingFavorites = !query.trim();
   const favQuotes = useFavoriteQuotes(showingFavorites ? favs : [], refreshKey);
@@ -165,7 +166,13 @@ export default function Command() {
   const stateFor = (row: Fav) =>
     quoteState?.symbol === row.symbol && quoteState.exchange === (row.exchange ?? "") ? quoteState : undefined;
   const exchangeTag = (exchange: string | undefined): List.Item.Accessory[] =>
-    exchange === "NSE" ? [{ tag: "NSE" }] : exchange === "BOM" ? [{ tag: "BSE" }] : [];
+    exchange === "NSE"
+      ? [{ tag: "NSE" }]
+      : exchange === "BOM"
+        ? [{ tag: "BSE" }]
+        : exchange?.startsWith("INDEX")
+          ? [{ tag: "Index" }]
+          : [];
 
   const priceAccessories = (row: Fav): List.Item.Accessory[] => {
     if (!showingFavorites) return [];
@@ -197,7 +204,7 @@ export default function Command() {
       onSelectionChange={(id) => setSelected(id ?? undefined)}
       filtering={false}
     >
-      {searchError ? (
+      {searchError && rows.length === 0 ? (
         <List.EmptyView icon={Icon.ExclamationMark} title="Search failed" description={searchError} />
       ) : rows.length === 0 ? (
         <List.EmptyView

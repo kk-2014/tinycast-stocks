@@ -226,3 +226,26 @@ Then we captured a page at 16:45 ET, genuinely during after-hours trading, and t
 The rule that separates a real extended quote from a stray tick is the timestamp, slot 18. Extended only if the quote's time falls *outside* the session window `[open, close)`: at or after the close is "After hours", before the open is "Pre-market". Inside the window it is just trading, so we say nothing. The RELIANCE page (market closed) has `null` in both slots, which falls out of the same defensive checks, no special case needed. The UI shows it as one extra line under the regular price (`extendedLine` in `src/extended.ts`, pure and unit tested), and the favorites rows deliberately keep showing the regular price only.
 
 **The honest limit.** The pre-market branch (`ts < open`) is inferred by symmetry, not observed. Its synthetic test proves our logic, not Google's format. Until someone captures a real page before 09:30 ET, treat it as a well-reasoned guess. The code comment says so too.
+
+## 12. Searching indices: the phone book that doesn't list landlines
+
+You typed "nifty" and got nothing. Not an error, just silence. That's the nastiest kind of bug: the app was working *exactly as written*.
+
+**The cause.** Our search comes from stockanalysis.com, and `toHit()` in `src/search.ts` is a bouncer with a short guest list: stocks and ETFs only. Indices were never invited. Worse, there's even a test that proves the bouncer turns away `st: "i"` on purpose. And even if an index had slipped through, the quote step only knew the exchanges `NASDAQ, NYSE…` and `NSE/BOM`. Google Finance files indices under their own venues (`INDEXNSE`, `INDEXBOM`, `INDEXSP`, `INDEXNASDAQ`…) with symbols like `NIFTY_50` and `.INX`.
+
+**The fix.** A small hand-written table in `src/indices.ts`: name, Google symbol, Google venue, and aliases ("banknifty", "spx", "dow"). `searchIndices()` matches it locally (exact, then prefix, then substring) and the list shows those hits first, tagged "Index". Because `fetchQuote` already accepts an explicit exchange, nothing else in the quote and chart pipeline had to change. Stats an index doesn't have (market cap, P/E) are already optional in the parser, so the detail pane just shows fewer rows.
+
+**Lessons.**
+- *Silent filters are bug factories.* "No matches" looked identical to "we threw your result away". Whenever you filter data, ask what a user would see if the filter is wrong.
+- *When the data source can't give you something, own the data.* A dozen indices change roughly never. A table is faster, works offline, and can't 403. Reaching for an API is not always the engineering answer.
+- *Check your sandbox before blaming the world.* I couldn't call the live API from the dev sandbox (403s), so I reasoned from the code and the saved fixtures, and said clearly what was unverified. Honest "I don't know yet" beats a confident guess.
+
+**Round two: "No NIFTY_50:INDEXNSE quote found on the page."** The first version shipped untested against a real index page (my sandbox couldn't reach Google), and it showed. The page loaded fine; the parser just couldn't *recognise* the quote inside it. Our parser finds data by shape, like spotting a person in a crowd by "tall, red coat, carrying an umbrella". For stocks, field 4 is the currency string (`"USD"`). For an index it's `null`, because an index is quoted in points, not money. Same story in the chart entries. Our shape check demanded a string, so every index was invisible.
+
+The fix: accept `null` for the currency (store `""`), and teach `money()` to print plain points when there's no currency. I saved the real page as a fixture (`test/fixtures/NIFTY_50-INDEXNSE-…html`), wrote the failing tests first, watched them reproduce the exact error message, then fixed.
+
+I also then checked all 13 table rows against live Google pages. 12 were right. `NIFTY_MIDCAP_100` doesn't exist on Google, so it became `NIFTY_MIDCAP_50`.
+
+**Lessons.**
+- *Shape-matching parsers fail by silence.* "Not found" can mean "not there" or "there, but shaped differently". Always test against a real captured sample of every *kind* of page you support, not just one kind.
+- *I shipped a guess and said so, and that was right, but it still cost you a round trip.* Unverified assumptions should be verified the moment access exists.

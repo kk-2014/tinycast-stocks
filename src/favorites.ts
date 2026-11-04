@@ -1,7 +1,7 @@
 export interface Fav {
   symbol: string;
   name: string;
-  /** "NSE" / "BOM" for Indian listings; absent for US ones (found by probing). */
+  /** "NSE" / "BOM" for Indian listings, "INDEX…" for indices; absent for US ones (found by probing). */
   exchange?: string;
 }
 

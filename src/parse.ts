@@ -10,7 +10,7 @@ function findAll(blobs: unknown[], predicate: (a: unknown[]) => boolean): unknow
   return out;
 }
 
-/** `[mid, [SYM, EXCH], name, _, currency, [price, change, pct, …], _, prevClose, …]` */
+/** `[mid, [SYM, EXCH], name, _, currency (null for indices), [price, change, pct, …], _, prevClose, …]` */
 export function findQuoteEntry(blobs: unknown[], symbol: string, exchange: string): unknown[] | undefined {
   return findAll(
     blobs,
@@ -19,7 +19,7 @@ export function findQuoteEntry(blobs: unknown[], symbol: string, exchange: strin
       a[1][0] === symbol &&
       a[1][1] === exchange &&
       isStr(a[2]) &&
-      isStr(a[4]) &&
+      (isStr(a[4]) || a[4] === null) &&
       Array.isArray(a[5]) &&
       isNum(a[5][0]) &&
       isNum(a[5][1]) &&
@@ -96,7 +96,7 @@ function findChartCandles(blobs: unknown[], symbol: string, exchange: string): M
       a[0][0] === symbol &&
       a[0][1] === exchange &&
       isStr(a[1]) &&
-      isStr(a[2]) &&
+      (isStr(a[2]) || a[2] === null) &&
       Array.isArray(a[3]) &&
       isNum(a[a.length - 2]),
   );
@@ -348,7 +348,8 @@ function parseUnsafe(html: string, symbol: string, exchange: string): ParseResul
     symbol,
     exchange,
     name: entry[2] as string,
-    currency: entry[4] as string,
+    // Indices are quoted in points, so Google sends no currency.
+    currency: isStr(entry[4]) ? entry[4] : "",
     price,
     change,
     changePercent,

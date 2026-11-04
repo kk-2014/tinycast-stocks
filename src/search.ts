@@ -2,10 +2,10 @@ import { defaultFetcher, UA, type Fetcher } from "./http";
 
 export interface SearchHit {
   symbol: string;
-  /** "" for US listings (found later by probing), "NSE" or "BOM" for Indian ones. */
+  /** "" for US listings (found later by probing), "NSE" or "BOM" for Indian ones, "INDEX…" for indices. */
   exchange: string;
   name: string;
-  type: "Stock" | "ETF";
+  type: "Stock" | "ETF" | "Index";
 }
 
 const MAX_HITS = 10;

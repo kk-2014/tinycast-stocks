@@ -21,6 +21,8 @@ export function compactFor(currency: string): (n: number) => string {
 }
 
 export function money(n: number, currency: string): string {
+  // Indices have no currency: show plain points.
+  if (!currency) return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   try {
     return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", { style: "currency", currency }).format(n);
   } catch {

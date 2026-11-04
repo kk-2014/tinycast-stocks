@@ -53,3 +53,9 @@ describe("timeAgo", () => {
   it("hours", () => expect(timeAgo(at(3 * 3600), now)).toBe("3h ago"));
   it("days", () => expect(timeAgo(at(2 * 86400), now)).toBe("2d ago"));
 });
+
+describe("money without a currency (indices)", () => {
+  it("formats as a plain number with no trailing space", () => {
+    expect(money(23809.45, "")).toBe("23,809.45");
+  });
+});

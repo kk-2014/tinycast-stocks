@@ -305,3 +305,25 @@ describe("parseGoogleFinance: extended-hours quote", () => {
     });
   });
 });
+
+describe("parseGoogleFinance: index page (no currency, no company profile)", () => {
+  const indexHtml = readFileSync(join(__dirname, "fixtures/NIFTY_50-INDEXNSE-2026-11-04.html"), "utf8");
+
+  it("parses an index quote whose currency is null", () => {
+    const r = parseGoogleFinance(indexHtml, "NIFTY_50", "INDEXNSE");
+    if (!r.ok) throw new Error(`expected ok, got ${r.kind}: ${r.reason}`);
+    const q = r.quote;
+    expect(q.name).toBe("NIFTY 50");
+    expect(q.currency).toBe("");
+    expect(q.price).toBeGreaterThan(1000);
+    expect(q.price - q.previousClose).toBeCloseTo(q.change, 1);
+    expect(q.stats.high).toBeGreaterThan(q.stats.low ?? 0);
+  });
+
+  it("finds the chart candles for an index (chart entries carry a null currency too)", () => {
+    const r = parseGoogleFinance(indexHtml, "NIFTY_50", "INDEXNSE");
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.quote.intraday.length).toBeGreaterThan(10);
+    expect(r.quote.daily.length).toBeGreaterThan(10);
+  });
+});
